@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1720">
+<title>BJ-9000 Bluetooth Programmer</title>
+<style>
+  :root { --bg:#0f1720; --card:#17212c; --line:#26323f; --text:#e6edf3; --dim:#8b98a5; --acc:#3fa7ff; --ok:#3fbf7f; --warn:#e6a23c; --bad:#e5534b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 16px 8px; }
+  h1 { font-size:20px; margin:0; }
+  .sub { color:var(--dim); font-size:13px; }
+  main { padding:8px 12px 40px; max-width:720px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin:10px 0; }
+  .card h2 { font-size:16px; margin:0 0 8px; display:flex; align-items:center; gap:8px; }
+  .num { display:inline-flex; width:24px; height:24px; border-radius:50%; background:var(--line); align-items:center; justify-content:center; font-size:13px; }
+  .done .num { background:var(--ok); color:#000; }
+  button { font:inherit; border:0; border-radius:10px; padding:12px 14px; background:var(--acc); color:#001426; font-weight:600; width:100%; margin-top:8px; }
+  button.secondary { background:var(--line); color:var(--text); }
+  button.danger { background:var(--bad); color:#fff; }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  label { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:14px; }
+  select, input[type=text] { font:inherit; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; width:100%; }
+  .status { font-size:14px; color:var(--dim); margin-top:6px; white-space:pre-wrap; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  progress { width:100%; height:10px; margin-top:8px; accent-color:var(--acc); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:6px 4px; border-top:1px solid var(--line); }
+  td.n { text-align:right; color:var(--dim); width:48px; }
+  details summary { cursor:pointer; color:var(--dim); font-size:14px; margin-top:6px; }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; font-size:12px; max-height:260px; overflow:auto; white-space:pre-wrap; margin:6px 0 0; }
+  .ch { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; color:var(--dim); }
+  .banner { border-left:4px solid var(--warn); padding:10px 12px; background:#2a2312; border-radius:8px; font-size:14px; }
+  dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:14px; width:min(92vw, 460px); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+</style>
+</head>
+<body>
+<header>
+  <h1>BJ-9000 / RT-950 Pro · Bluetooth Programmer</h1>
+  <div class="sub">v<span id="ver"></span> · writes channels &amp; zone names only · settings, APRS, calibration untouched</div>
+</header>
+<main>
+  <div id="support" class="banner" hidden></div>
+
+  <section class="card" id="c1">
+    <h2><span class="num">1</span>Connect</h2>
+    <div class="sub">Radio on, Bluetooth on (radio menu), <b>not</b> connected to the Radtel phone app.</div>
+    <button id="btnConnect">Connect to radio</button>
+    <label><input type="checkbox" id="showAll"> Show all Bluetooth devices (if the radio isn't listed)</label>
+    <div class="status" id="s1">Not connected.</div>
+  </section>
+
+  <section class="card" id="c2">
+    <h2><span class="num">2</span>Read radio &amp; save backup</h2>
+    <button id="btnRead" disabled>Read radio</button>
+    <progress id="p2" value="0" max="1" hidden></progress>
+    <div class="status" id="s2">Reads ~260 blocks (about 1–2 min). Nothing is written.</div>
+    <div class="row"><button class="secondary" id="btnSaveBk" disabled>Download backup</button><button class="secondary" id="btnCopyBk" disabled>Copy backup</button></div>
+  </section>
+
+  <section class="card" id="c3">
+    <h2><span class="num">3</span>Channels to write</h2>
+    <div class="sub">Select your CHIRP-format zone files (multi-select), named <code>ZoneNN_NAME.csv</code>, e.g. <code>Zone03_LOCAL.csv</code> = zone 3 named "LOCAL". A zone file replaces that whole zone; zones without a file are left alone.</div>
+    <button id="btnPickCsv">Choose zone CSV files…</button>
+    <input type="file" id="csvIn" accept=".csv,text/csv,text/comma-separated-values,text/plain" multiple hidden>
+    <div class="sub" id="zsrc">No channels loaded.</div>
+    <table id="ztab"></table>
+    <label><input type="checkbox" id="remember" checked> Remember these files on this phone only (never uploaded anywhere)</label>
+    <button class="secondary" id="btnClearZones">Clear loaded channels</button>
+  </section>
+
+  <section class="card" id="c4">
+    <h2><span class="num">4</span>Write to radio</h2>
+    <label>Firmware layout (Menu › About)
+      <select id="layout"><option value="990">0.24 or newer · 10 zones × 99</option><option value="960">older · 15 zones × 64</option></select></label>
+    <button id="btnPlan" disabled>Preview changes</button>
+    <div class="status" id="s4">Read the radio first.</div>
+    <button class="danger" id="btnWrite" disabled>Write to radio</button>
+    <progress id="p4" value="0" max="1" hidden></progress>
+  </section>
+
+  <section class="card" id="c5">
+    <h2><span class="num">↺</span>Restore from backup</h2>
+    <div class="sub">Puts channels and zone names back exactly as saved.</div>
+    <div class="row"><button class="secondary" id="btnLastBk" disabled>Undo last write</button>
+      <button class="secondary" id="btnPickBk">Choose file…</button></div>
+    <input type="file" id="bkIn" accept=".json,application/json" hidden>
+    <div class="status" id="s5"></div>
+  </section>
+
+  <section class="card">
+    <details><summary>Advanced</summary>
+      <label>Extra accepted model string (exact, as shown after Read)
+        <input type="text" id="extraModel" placeholder="e.g. BJ-9000" autocomplete="off"></label>
+      <label><input type="checkbox" id="allowHigh"> Allow writing channels 961–990 (990-channel firmware only)</label>
+      <button class="secondary" id="btnVerify" disabled>Verify last write again</button>
+      <button class="secondary" id="btnDisc">Disconnect</button>
+    </details>
+    <details open><summary>Log</summary><pre id="log"></pre>
+      <button class="secondary" id="btnCopyLog">Copy log</button></details>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <h3 style="margin-top:0">Write to radio?</h3>
+  <div id="dlgBody" class="status"></div>
+  <label><input type="checkbox" id="dlgFw"> My radio's firmware matches the layout I picked</label>
+  <label><input type="checkbox" id="dlgBk"> I have the backup from step 2</label>
+  <div class="row"><button class="secondary" id="dlgNo">Cancel</button><button class="danger" id="dlgYes" disabled>Write</button></div>
+</dialog>
+
+<script>
+/*CORE*/
+</script>
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  $("ver").textContent = BJ.VERSION;
+  const logEl = $("log");
+  const log = (m, cls) => { const t = new Date().toLocaleTimeString(); logEl.textContent += `[${t}] ${m}\n`; logEl.scrollTop = logEl.scrollHeight; };
+  const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } } };
+  const setStatus = (id, msg, cls = "") => { const el = $(id); el.textContent = msg; el.className = "status " + cls; };
+
+  let link = null, image = null, backup = null, zones = [], lastBlocks = null, busy = false, wakeLock = null;
+  try { const saved = JSON.parse(store.get("bj_zones") || "null"); if (Array.isArray(saved)) zones = saved; } catch (e) { }
+  $("extraModel").value = store.get("bj_extra_model") || "";
+  $("extraModel").addEventListener("change", e => store.set("bj_extra_model", e.target.value.trim()));
+  const opts = () => ({ allowedModels: ["RT-950"].concat($("extraModel").value.trim() ? [$("extraModel").value.trim()] : []), log });
+
+  // browser support
+  if (!navigator.bluetooth) {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    $("support").hidden = false;
+    $("support").innerHTML = ios
+      ? "This browser has no Web Bluetooth. On iPhone/iPad open this page in the <b>Bluefy</b> browser (free, App Store)."
+      : !window.isSecureContext ? "Web Bluetooth needs an <b>https://</b> address. Open this page from its https link, not as a local file."
+      : "This browser has no Web Bluetooth. On Android use <b>Chrome</b> (or Edge/Samsung Internet).";
+    $("btnConnect").disabled = true;
+  }
+
+  function renderZones() {
+    const L = BJ.LAYOUTS[$("layout").value];
+    const n = zones.reduce((s, z) => s + z.rows.length, 0);
+    $("zsrc").textContent = zones.length ? `Loaded: ${zones.length} zones, ${n} channels.` : "No channels loaded.";
+    $("btnClearZones").hidden = !zones.length;
+    $("ztab").innerHTML = zones.slice().sort((a, b) => a.zone - b.zone).map(z =>
+      `<tr><td>Zone ${z.zone}</td><td>${esc(z.name)}</td><td class="n ${z.rows.length > L.per || z.zone > L.zones ? "bad" : ""}">${z.rows.length}</td></tr>`).join("");
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  renderZones();
+  $("layout").addEventListener("change", () => { renderZones(); invalidatePlan(); });
+  $("allowHigh").addEventListener("change", invalidatePlan);
+
+  async function guard(fn) {
+    if (busy) return; busy = true;
+    document.querySelectorAll("main button").forEach(b => { b.dataset.was = b.disabled; b.disabled = true; });
+    try { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { } await fn(); }
+    catch (e) { log("ERROR: " + e.message); throw e; }
+    finally {
+      busy = false; document.querySelectorAll("main button").forEach(b => { b.disabled = b.dataset.was === "true"; });
+      try { await wakeLock?.release(); } catch (e) { } wakeLock = null; refreshButtons();
+    }
+  }
+  function refreshButtons() {
+    const conn = !!(link && link.device);
+    $("btnRead").disabled = !conn; $("btnPlan").disabled = !(conn && image);
+    $("btnVerify").disabled = !(conn && lastBlocks && lastBlocks.length);
+    $("btnSaveBk").disabled = $("btnCopyBk").disabled = !backup;
+    $("btnLastBk").disabled = !(conn && store.get("bj_prewrite_backup"));
+    $("btnWrite").disabled = !(conn && image && plan && plan.blocks.length);
+  }
+  let plan = null;
+  function invalidatePlan() { plan = null; if (image) setStatus("s4", "Tap Preview changes."); refreshButtons(); }
+
+  // 1 connect
+  $("btnConnect").onclick = () => guard(async () => {
+    link = link || BJ.webBluetoothLink(log);
+    setStatus("s1", "Choose the radio in the list…");
+    try { await link.choose($("showAll").checked); }
+    catch (e) { setStatus("s1", e.name === "NotFoundError" ? "No device chosen. Tick 'Show all Bluetooth devices' and try again." : "Connect failed: " + e.message, "bad"); link.device = null; return; }
+    setStatus("s1", `Connected: ${link.device.name || "(no name)"}`, "ok"); $("c1").classList.add("done");
+  });
+  $("btnDisc").onclick = () => { if (link) link.disconnect(); setStatus("s1", "Disconnected."); };
+
+  // 2 read
+  $("btnRead").onclick = () => guard(async () => {
+    $("p2").hidden = false; $("p2").value = 0; setStatus("s2", "Reading…");
+    try {
+      image = await BJ.readImage(link, opts(), (d, t) => { $("p2").max = t; $("p2").value = d; });
+    } catch (e) { setStatus("s2", "Read failed: " + e.message, "bad"); return; }
+    backup = BJ.backupJSON(image);
+    store.set("bj_last_backup", backup.text); store.set("bj_last_backup_name", backup.name);
+    const names = BJ.zoneNames(image.zn).map((n, i) => n ? `${i + 1}:${n}` : "").filter(Boolean).join("  ");
+    let used = 0; for (let s = 0; s < 990; s++) if (BJ.decFreq(image.ch.subarray(s * 32, s * 32 + 4)) !== null) used++;
+    setStatus("s2", `Model "${image.model}" · ${used} channels in use\nZone names: ${names || "(none – older firmware?)"}\nBackup kept on this phone. Also download it.`, "ok");
+    if (!names) log("No zone names found: radio may be on older 960-channel firmware. Check Menu › About and pick the layout in step 4.");
+    $("c2").classList.add("done"); invalidatePlan();
+  });
+  function download(name, text) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  $("btnSaveBk").onclick = () => download(backup.name, backup.text);
+  $("btnCopyBk").onclick = async () => { try { await navigator.clipboard.writeText(backup.text); log("Backup copied to clipboard."); } catch (e) { log("Copy failed: " + e.message); } };
+
+  // 3 CSVs
+  $("csvIn").onchange = async e => {
+    const files = Array.from(e.target.files || []); const out = [];
+    for (const f of files) {
+      const z = BJ.zoneFromFilename(f.name);
+      if (!z) { log(`Skipped ${f.name}: name must be ZoneNN_NAME.csv`); continue; }
+      out.push({ zone: z.zone, name: z.name, rows: BJ.parseCSV(await f.text()) });
+    }
+    e.target.value = "";
+    if (!out.length) return;
+    zones = out;
+    if ($("remember").checked) store.set("bj_zones", JSON.stringify(zones)); else store.set("bj_zones", "");
+    log(`Loaded ${out.length} zone files: ${out.map(z => `Z${z.zone} ${z.name} (${z.rows.length})`).join(", ")}`);
+    renderZones(); invalidatePlan();
+  };
+  $("btnPickCsv").onclick = () => $("csvIn").click();
+  $("remember").onchange = e => store.set("bj_zones", e.target.checked && zones.length ? JSON.stringify(zones) : "");
+  $("btnClearZones").onclick = () => { zones = []; store.set("bj_zones", ""); renderZones(); invalidatePlan(); };
+
+  // 4 plan + write
+  function makePlan() {
+    if (!zones.length) throw new Error("no channels loaded - choose your zone CSV files in step 3");
+    const layout = $("layout").value, allowHigh = $("allowHigh").checked;
+    const target = BJ.buildTarget(image, zones, layout, allowHigh, log);
+    const blocks = BJ.planWrites(image, target, layout, allowHigh);
+    return { layout, target, blocks };
+  }
+  $("btnPlan").onclick = () => {
+    try { plan = makePlan(); } catch (e) { setStatus("s4", "Cannot write: " + e.message, "bad"); plan = null; refreshButtons(); return; }
+    const L = BJ.LAYOUTS[plan.layout];
+    const lines = [`${plan.blocks.length} blocks (of 128 bytes) will change.`];
+    for (const z of plan.target.report) lines.push(`Zone ${z.zone} ${z.name}: ${z.count} ch`);
+    if (!plan.blocks.length) lines.push("Radio already matches – nothing to write.");
+    setStatus("s4", lines.join("\n"), plan.blocks.length ? "" : "ok");
+    log("Plan:\n" + plan.target.report.map(z => {
+      const recs = [];
+      for (let k = 0; k < z.count; k++) { const s = (z.zone - 1) * L.per + k; recs.push(`   ${String(k + 1).padStart(2)} ${BJ.describe(plan.target.ch.subarray(s * 32, s * 32 + 32))}`); }
+      return `Zone ${z.zone} ${z.name}\n` + recs.join("\n");
+    }).join("\n"));
+    refreshButtons();
+  };
+  let pending = null;
+  function confirmWrite(text, action) {
+    $("dlgBody").textContent = text + "\nKeep the phone near the radio and the screen on until it finishes.";
+    $("dlgFw").checked = $("dlgBk").checked = false; $("dlgYes").disabled = true; pending = action; $("dlg").showModal();
+  }
+  $("btnWrite").onclick = () => {
+    const blocks = plan.blocks;
+    confirmWrite(`${blocks.length} blocks · layout ${plan.layout} · radio "${image.model}".`, () => doWrite(blocks, "s4", "p4"));
+  };
+  const dlgCheck = () => { $("dlgYes").disabled = !($("dlgFw").checked && $("dlgBk").checked); };
+  $("dlgFw").onchange = $("dlgBk").onchange = dlgCheck;
+  $("dlgNo").onclick = () => { pending = null; $("dlg").close(); };
+  $("dlgYes").onclick = () => { $("dlg").close(); const a = pending; pending = null; if (a) a(); };
+
+  function doWrite(blocks, sid, pid) {
+    return guard(async () => {
+      $(pid).hidden = false; $(pid).value = 0;
+      setStatus(sid, "Checking radio still matches the backup…");
+      // re-read only the blocks we will touch: refuse if the radio changed since the backup
+      const before = await BJ.verifyBlocks(link, opts(), blocks.map(b => ({ addr: b.addr, data: (b.addr >= BJ.ZN_ADDR ? image.zn.subarray(b.addr - BJ.ZN_ADDR, b.addr - BJ.ZN_ADDR + 128) : image.ch.subarray(b.addr, b.addr + 128)) })));
+      if (before.length) { setStatus(sid, "Radio memory changed since the backup. Read the radio again first.", "bad"); return; }
+      // keep the exact pre-write state for "Undo last write" (a later Read must not replace it)
+      const pre = BJ.backupJSON(image);
+      store.set("bj_prewrite_backup", pre.text);
+      log(`Pre-write backup kept on this phone (${pre.name}).`);
+      setStatus(sid, "Writing…");
+      try { await BJ.writeBlocks(link, opts(), blocks, (d, t) => { $(pid).max = t; $(pid).value = d; }); }
+      catch (e) { setStatus(sid, `Write stopped: ${e.message}\nRestore from the backup if the radio misbehaves.`, "bad"); return; }
+      lastBlocks = blocks;
+      setStatus(sid, "Written. Verifying…");
+      await BJ.sleep(2000);
+      let bad;
+      try { bad = await BJ.verifyBlocks(link, opts(), blocks, (d, t) => { $(pid).max = t; $(pid).value = d; }); }
+      catch (e) { setStatus(sid, `Written, but verify couldn't run (${e.message}). Reconnect and use Advanced › Verify.`, "warn"); return; }
+      if (bad.length) setStatus(sid, `VERIFY FAILED at ${bad.map(a => "0x" + a.toString(16)).join(", ")}. Use Restore.`, "bad");
+      else {
+        setStatus(sid, `Done – ${blocks.length} blocks written and verified.`, "ok"); $("c4").classList.add("done");
+        // keep our in-memory image in step with the radio
+        for (const b of blocks) (b.addr >= BJ.ZN_ADDR ? image.zn : image.ch).set(b.data, b.addr >= BJ.ZN_ADDR ? b.addr - BJ.ZN_ADDR : b.addr);
+        plan = null;
+      }
+    });
+  }
+  $("btnVerify").onclick = () => guard(async () => {
+    const bad = await BJ.verifyBlocks(link, opts(), lastBlocks);
+    log(bad.length ? `Verify: ${bad.length} blocks differ` : "Verify: all blocks match");
+  });
+
+  // restore
+  async function restore(text) {
+    let bimg; try { bimg = BJ.parseBackup(text); } catch (e) { setStatus("s5", e.message, "bad"); return; }
+    if (!image) { setStatus("s5", "Read the radio first (step 2), then restore.", "warn"); return; }
+    const layout = $("layout").value, L = BJ.LAYOUTS[layout];
+    const blocks = BJ.changedBlocks(image.ch, bimg.ch, 0, $("allowHigh").checked ? L.chMax : BJ.LOW_LIMIT)
+      .concat(L.zoneNames ? BJ.changedBlocks(image.zn, bimg.zn, BJ.ZN_ADDR, BJ.ZN_LEN) : []);
+    if (!blocks.length) { setStatus("s5", "Radio already matches that backup.", "ok"); return; }
+    confirmWrite(`RESTORE: ${blocks.length} blocks from backup (model "${bimg.model}").`, () => doWrite(blocks, "s5", "p4"));
+  }
+  $("btnLastBk").onclick = () => restore(store.get("bj_prewrite_backup"));
+  $("btnPickBk").onclick = () => $("bkIn").click();
+  $("bkIn").onchange = async e => { const f = e.target.files[0]; if (f) restore(await f.text()); };
+  $("btnCopyLog").onclick = async () => { try { await navigator.clipboard.writeText(logEl.textContent); } catch (e) { } };
+
+  log(`Ready. ${navigator.bluetooth ? "Web Bluetooth available." : "No Web Bluetooth in this browser."}`);
+  refreshButtons();
+})();
+</script>
+</body>
+</html>
