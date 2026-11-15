@@ -5,7 +5,7 @@
  */
 (function (root) {
   "use strict";
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const HANDSHAKE = Array.from("PROGRAMBT9000U", c => c.charCodeAt(0));
   const ACK = 0x06, BLOCK = 0x80, REC = 32;
   const XOR_KEYS = ["BHT ", "CO 7", "A ES", " EIY", "M PQ", "XN Y", "RVB ", " HQP", "W RC", "MS N",
@@ -136,8 +136,72 @@
       .filter(r => r.Frequency);
   }
   function zoneFromFilename(fn) {
-    const m = /Zone(\d+)_(.*)\.csv$/i.exec(fn);
+    const base = String(fn).split(/[\\/]/).pop();
+    if (base.startsWith("._")) return null;                       // macOS resource-fork junk
+    const m = /^Zone(\d+)_(.*)\.csv$/i.exec(base);
     return m ? { zone: parseInt(m[1], 10), name: m[2].replace(/_/g, " ").slice(0, 12) } : null;
+  }
+
+  // ------------------------------------------------------------- ZIP (read-only, no library)
+  // Reads a standard .zip (stored or deflate) via the central directory.
+  // Inflate uses the built-in DecompressionStream("deflate-raw"): Chrome 103+, Safari/iOS 16.4+, Node 18+.
+  async function inflateRaw(bytes) {
+    if (typeof DecompressionStream === "undefined") throw new Error("this browser can't open .zip files - unzip and pick the CSVs instead");
+    const ds = new DecompressionStream("deflate-raw");
+    const out = new Response(new Blob([bytes]).stream().pipeThrough(ds));
+    return new Uint8Array(await out.arrayBuffer());
+  }
+  async function unzip(buf) {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= Math.max(0, u8.length - 22 - 0xFFFF); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error("not a zip file (no end-of-directory record)");
+    const count = dv.getUint16(eocd + 10, true);
+    let p = dv.getUint32(eocd + 16, true);
+    const files = [];
+    for (let n = 0; n < count; n++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("corrupt zip directory");
+      const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true);
+      const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+      const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+      const lho = dv.getUint32(p + 42, true);
+      const name = new TextDecoder(flags & 0x800 ? "utf-8" : "latin1").decode(u8.subarray(p + 46, p + 46 + nlen));
+      p += 46 + nlen + xlen + clen;
+      if (name.endsWith("/")) continue;                                // directory
+      if (flags & 1) throw new Error(`${name}: encrypted zips are not supported`);
+      if (dv.getUint32(lho, true) !== 0x04034b50) throw new Error(`${name}: bad local header`);
+      const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+      const raw = u8.subarray(start, start + csize);
+      let data;
+      if (method === 0) data = raw.slice();
+      else if (method === 8) data = await inflateRaw(raw);
+      else throw new Error(`${name}: unsupported compression method ${method}`);
+      if (data.length !== usize) throw new Error(`${name}: size mismatch after unzip`);
+      files.push({ name, data });
+    }
+    return files;
+  }
+  // Turns any mix of picked items ({name, text} CSVs and {name, zip:ArrayBuffer}) into zone objects.
+  // Later files win if two carry the same zone number. Returns {zones, notes}.
+  async function zonesFromInputs(items) {
+    const byZone = new Map(), notes = [];
+    const addCsv = (name, text, from) => {
+      const z = zoneFromFilename(name);
+      if (!z) { if (/\.csv$/i.test(name) && !String(name).split(/[\\/]/).pop().startsWith("._")) notes.push(`Skipped ${name}: name must be ZoneNN_NAME.csv`); return; }
+      if (byZone.has(z.zone)) notes.push(`Zone ${z.zone}: ${name} replaces ${byZone.get(z.zone).src}`);
+      byZone.set(z.zone, { zone: z.zone, name: z.name, rows: parseCSV(text), src: from ? `${from}:${name}` : name });
+    };
+    for (const it of items) {
+      if (it.zip) {
+        const entries = await unzip(it.zip);
+        const csvs = entries.filter(e => zoneFromFilename(e.name));
+        if (!csvs.length) notes.push(`${it.name}: no ZoneNN_NAME.csv files inside`);
+        for (const e of entries) if (!e.name.includes("__MACOSX/")) addCsv(e.name, new TextDecoder("utf-8").decode(e.data), it.name);
+      } else addCsv(it.name, it.text, null);
+    }
+    const zones = [...byZone.values()].sort((a, b) => a.zone - b.zone).map(({ zone, name, rows }) => ({ zone, name, rows }));
+    return { zones, notes };
   }
 
   // ------------------------------------------------------------- planning
@@ -525,7 +589,7 @@
 
   const api = {
     VERSION, LAYOUTS, BLE, DCS_CODES, EMPTY_REC, XOR_KEYS, HANDSHAKE, CH_LEN, ZN_ADDR, ZN_LEN, LOW_LIMIT, BLOCK, REC,
-    hex, toHex, eq, encFreq, decFreq, encCtcss, encDcs, buildRecord, describe, parseCSV, zoneFromFilename, zoneNames,
+    hex, toHex, eq, encFreq, decFreq, encCtcss, encDcs, buildRecord, describe, parseCSV, zoneFromFilename, unzip, zonesFromInputs, zoneNames,
     buildTarget, planWrites, changedBlocks, Transport, readImage, writeBlocks, verifyBlocks, backupJSON, parseBackup,
     webBluetoothLink, chunkedWriter, sleep,
     APRS_FIELDS, BEACON_TIMES, parseAprs, encodeAprs, validateAprs, decimalToDMS, readAprs, writeAprs, CB40, cbRows,

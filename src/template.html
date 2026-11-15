@@ -75,9 +75,9 @@
 
   <section class="card" id="c3">
     <h2><span class="num">3</span>Channels to write</h2>
-    <div class="sub">Select your CHIRP-format zone files (multi-select), named <code>ZoneNN_NAME.csv</code>, e.g. <code>Zone03_LOCAL.csv</code> = zone 3 named "LOCAL". A zone file replaces that whole zone; zones without a file are left alone.</div>
-    <button id="btnPickCsv">Choose zone CSV files…</button>
-    <input type="file" id="csvIn" accept=".csv,text/csv,text/comma-separated-values,text/plain" multiple hidden>
+    <div class="sub">Pick a <b>.zip zone package</b> or your CHIRP-format zone files (multi-select), named <code>ZoneNN_NAME.csv</code>, e.g. <code>Zone03_LOCAL.csv</code> = zone 3 named "LOCAL". A zip is read directly on the phone, no unzipping needed; CSVs inside sub-folders are found too. A zone file replaces that whole zone; zones without a file are left alone.</div>
+    <button id="btnPickCsv">Choose zone package (.zip) or CSV files…</button>
+    <input type="file" id="csvIn" accept=".zip,application/zip,application/x-zip-compressed,.csv,text/csv,text/comma-separated-values,text/plain" multiple hidden>
     <div class="sub" id="zsrc">No channels loaded.</div>
     <table id="ztab"></table>
     <label><input type="checkbox" id="remember" checked> Remember these files on this phone only (never uploaded anywhere)</label>
@@ -279,18 +279,23 @@
 
   // 3 CSVs
   $("csvIn").onchange = async e => {
-    const files = Array.from(e.target.files || []); const out = [];
-    for (const f of files) {
-      const z = BJ.zoneFromFilename(f.name);
-      if (!z) { log(`Skipped ${f.name}: name must be ZoneNN_NAME.csv`); continue; }
-      out.push({ zone: z.zone, name: z.name, rows: BJ.parseCSV(await f.text()) });
-    }
-    e.target.value = "";
-    if (!out.length) return;
+    const files = Array.from(e.target.files || []); e.target.value = "";
+    if (!files.length) return;
+    let out, notes;
+    try {
+      const items = [];
+      for (const f of files) {
+        if (/\.zip$/i.test(f.name) || /zip/i.test(f.type)) items.push({ name: f.name, zip: await f.arrayBuffer() });
+        else items.push({ name: f.name, text: await f.text() });
+      }
+      ({ zones: out, notes } = await BJ.zonesFromInputs(items));
+    } catch (err) { log("Could not read zone files: " + err.message); $("zsrc").textContent = "Could not read: " + err.message; return; }
+    notes.forEach(n => log(n));
+    if (!out.length) { log("No zone files found. Names must be ZoneNN_NAME.csv (inside the zip or picked directly)."); return; }
     zones = out;
     if ($("remember").checked) store.set("bj_zones", JSON.stringify(zones)); else store.set("bj_zones", "");
     log(`Loaded ${out.length} zone files: ${out.map(z => `Z${z.zone} ${z.name} (${z.rows.length})`).join(", ")}`);
-    renderZones(); invalidatePlan();
+    renderZones(); invalidatePlan(); fillCbZones();
   };
   $("btnPickCsv").onclick = () => $("csvIn").click();
   $("remember").onchange = e => store.set("bj_zones", e.target.checked && zones.length ? JSON.stringify(zones) : "");
@@ -411,7 +416,6 @@
   $("btnCbAppend").onclick = () => addCb(false);
   $("btnCbReplace").onclick = () => addCb(true);
   $("layout").addEventListener("change", fillCbZones);
-  $("csvIn").addEventListener("change", () => setTimeout(fillCbZones, 300));
   $("btnClearZones").addEventListener("click", fillCbZones);
   fillCbZones();
 

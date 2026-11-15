@@ -66,6 +66,19 @@ with sync_playwright() as p:
     for name, rows in SAMPLE.items():
         (tmp / name).write_text(HDR + "\r\n" + "\r\n".join(rows) + "\r\n")
         files.append(str(tmp / name))
+    import zipfile
+    (tmp / "bad.zip").write_bytes(b"not a zip")
+    page.set_input_files("#csvIn", str(tmp / "bad.zip"))
+    page.wait_for_function("document.getElementById('zsrc').textContent.startsWith('Could not read')")
+    check("bad zip rejected with message", "not a zip file" in page.inner_text("#zsrc"))
+    with zipfile.ZipFile(tmp / "pkg.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            z.write(f, "My Zones/" + Path(f).name)
+        z.writestr("__MACOSX/My Zones/._" + Path(files[0]).name, b"\x00junk")
+    page.set_input_files("#csvIn", str(tmp / "pkg.zip"))
+    page.wait_for_function("document.getElementById('zsrc').textContent.startsWith('Loaded')")
+    check("ZIP upload (subfolder, deflate): 2 zones, 3 channels", page.inner_text("#zsrc") == "Loaded: 2 zones, 3 channels.")
+    page.click("#btnClearZones")
     page.set_input_files("#csvIn", files)
     page.wait_for_function("document.getElementById('zsrc').textContent.startsWith('Loaded')")
     check("CSV upload: 2 zones, 3 channels", page.inner_text("#zsrc") == "Loaded: 2 zones, 3 channels.")

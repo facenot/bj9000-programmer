@@ -1,4 +1,4 @@
-# BJ-9000 / RT-950 Pro Bluetooth Programmer (web app) v1.1.0
+# BJ-9000 / RT-950 Pro Bluetooth Programmer (web app) v1.2.0
 
 `index.html` is the whole app. It programs a **Bajeton BJ-9000** or **Radtel RT-950 Pro** over Bluetooth LE from a phone
 browser. The two are the same hardware with the same programming protocol, so pick yours at the top of the page.
@@ -21,7 +21,7 @@ Web Bluetooth only runs on an **https://** address, e.g. this repo's GitHub Page
 3. **Read radio.** A backup is kept on the phone. Also tap **Download backup**.
    If the radio reports a model name other than "RT-950", the app stops and shows the name, with a
    one-tap button to accept it as your radio.
-4. **Choose zone CSV files** and multi-select your `ZoneNN_NAME.csv` files. They stay on the phone.
+4. **Choose zone package (.zip) or CSV files.** Pick one `.zip` holding your `ZoneNN_NAME.csv` files (sub-folders are fine, no need to unzip first), or multi-select the CSVs themselves. If a loose CSV and a zip both carry the same zone number, the file picked later wins and the log says so. Everything stays on the phone.
 5. **Preview changes** → **Write to radio**. Every written block is read back and verified.
    **Undo last write** restores the exact pre-write state.
 
@@ -29,6 +29,7 @@ Web Bluetooth only runs on an **https://** address, e.g. this repo's GitHub Page
 
 CHIRP CSV columns (`Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,...`).
 The file name sets the zone: `Zone03_LOCAL.csv` = zone 3, named "LOCAL" (max 12 chars).
+A zone package is just these CSVs zipped together (standard zip, stored or deflate, not password-protected). Zip reading uses the browser's built-in decompressor: Chrome 103+ on Android, Bluefy on iOS 16.4+.
 A zone file replaces that whole zone. Zones without a file are left untouched.
 `Duplex` = `off` → TX disabled. `Mode` = `AM` → AM receive.
 
