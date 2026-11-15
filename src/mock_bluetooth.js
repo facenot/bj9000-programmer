@@ -10,6 +10,11 @@
     for (const s of [0, 1, 50, 900]) SIM.mem.set(BJ.buildRecord({ Frequency: (146 + s / 1000).toFixed(4), Name: "OLD" + s, Mode: "FM" }), s * 32);
     SIM.mem.fill(0xFF, 0xC000, 0xC100); SIM.mem.set(Array.from("OLDZONE1", c => c.charCodeAt(0)), 0xC000);
     SIM.original = new Uint8Array(SIM.mem);
+    SIM.aprs = new Uint8Array(128).fill(0x00);
+    SIM.aprs.set([0, 1, 0, 0, 0, 0, 8, 0x4E, 44, 39, 21, 0x57, 59, 104, 10, 0x64, 0x00], 0);
+    SIM.aprs.set(Array.from("N0CALL", c => c.charCodeAt(0)), 17); SIM.aprs[23] = 9; SIM.aprs[26] = 2;
+    SIM.aprs.set(Array.from("Hello world!", c => c.charCodeAt(0)), 79); SIM.aprs.fill(0xFF, 119, 128);
+    SIM.aprsOriginal = new Uint8Array(SIM.aprs); SIM.reconnects = 0;
   }
   let listener = null;
   const notify = bytes => { for (let i = 0; i < bytes.length; i += 20) { const p = new Uint8Array(bytes.slice(i, i + 20)); setTimeout(() => listener && listener({ target: { value: new DataView(p.buffer) } }), 2 + i / 20); } };
@@ -21,7 +26,7 @@
       if (!b.length) return;
       if (SIM.state === "hs") {
         if (b[0] === 0x46) { b.splice(0, 1); notify([...Array(16).keys()]); continue; }
-        if (b[0] === 0x4D) { b.splice(0, 1); notify(Array.from("RT-950      ", c => c.charCodeAt(0))); continue; }
+        if (b[0] === 0x4D) { b.splice(0, 1); notify(Array.from((SIM.model || "RT-950").padEnd(12, " "), c => c.charCodeAt(0))); continue; }
         if (b[0] === 0x45) { b.splice(0, 1); SIM.state = "idle"; continue; }
         if (b.length < 25) return;
         const f = b.splice(0, 25), code = f[4]; const idx = ((code & 0x20) ? (code - 0x20) * 2 + 1 : (code - 0x10) * 2) + 1;
@@ -29,23 +34,26 @@
       }
       if (b[0] === 0x45) { b.splice(0, 1); SIM.state = "idle"; continue; }
       if (b[0] === 0x52) { if (b.length < 4) return; const h = b.splice(0, 4), a = (h[1] << 8) | h[2]; notify([...h, ...xor(SIM.mem.subarray(a, a + 128))]); continue; }
+      if (b[0] === 0x54) { if (b.length < 4) return; const h = b.splice(0, 4); notify([...h, ...xor(SIM.aprs)]); continue; }
+      if (b[0] === 0x58) { if (b.length < 132) return; const f = b.splice(0, 132); SIM.aprs.set(xor(new Uint8Array(f.slice(4))), 0); SIM.aprsWrites = (SIM.aprsWrites || 0) + 1; notify([6]);
+        setTimeout(() => { device.gatt.connected = false; SIM.state = "idle"; SIM.inb.length = 0; }, 40); continue; }
       if (b[0] === 0x57) { if (b.length < 132) return; const f = b.splice(0, 132), a = (f[1] << 8) | f[2]; SIM.mem.set(xor(new Uint8Array(f.slice(4))), a); SIM.writes.push(a); notify([6]); continue; }
       throw new Error("sim: unexpected " + b[0]);
     }
   }
   const ffe1 = {
     uuid: "0000ffe1-0000-1000-8000-00805f9b34fb", properties: { writeWithoutResponse: true, write: true, notify: true },
-    addEventListener: (ev, fn) => { listener = fn; },
+    addEventListener: (ev, fn) => { listener = fn; }, removeEventListener: () => { },
     startNotifications: async () => ffe1,
-    writeValueWithoutResponse: async (p) => { SIM.chunks++; SIM.maxChunk = Math.max(SIM.maxChunk, p.length); SIM.inb.push(...p); process(); },
-    writeValueWithResponse: async (p) => ffe1.writeValueWithoutResponse(p),
+    writeValueWithoutResponse: async (p) => { if (!device.gatt.connected) throw new Error("GATT Server is disconnected"); SIM.chunks++; SIM.maxChunk = Math.max(SIM.maxChunk, p.length); SIM.inb.push(...p); process(); },
+    writeValueWithResponse: async (p) => { if (p[0] === 0x58) SIM.aprsWithResponse = true; return ffe1.writeValueWithoutResponse(p); },
   };
   const ff31 = { uuid: "0000ff31-0000-1000-8000-00805f9b34fb", properties: { write: true },
     writeValueWithResponse: async (p) => { SIM.unlock = Array.from(new Uint8Array(p.buffer || p)).map(x => x.toString(16).padStart(2, "0")).join(""); notify([0x21, 0x4F, 0x4B]); } };
   const device = {
     name: "RT-950 Pro", addEventListener: () => { },
     gatt: { connected: false,
-      connect: async () => { device.gatt.connected = true; return { getPrimaryServices: async () => [
+      connect: async () => { if (SIM.everConnected) SIM.reconnects++; SIM.everConnected = true; SIM.state = "idle"; device.gatt.connected = true; return { getPrimaryServices: async () => [
         { uuid: "0000ffe0-0000-1000-8000-00805f9b34fb", getCharacteristics: async () => [ffe1] },
         { uuid: "0000ff30-0000-1000-8000-00805f9b34fb", getCharacteristics: async () => [ff31] }] }; },
       disconnect: () => { device.gatt.connected = false; } },

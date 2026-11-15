@@ -20,7 +20,8 @@ def check(name, cond):
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, accept_downloads=True)
+    ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, accept_downloads=True,
+                              geolocation={"latitude": 39.7392, "longitude": -104.9903}, permissions=["geolocation"])
     ctx.add_init_script(path=str(HERE / "mock_bluetooth.js"))
     page = ctx.new_page()
     errors = []
@@ -33,14 +34,24 @@ with sync_playwright() as p:
     page.goto(f"http://127.0.0.1:{srv.server_address[1]}/index.html")
 
     check("Read disabled before connect", page.is_disabled("#btnRead"))
+    check("default radio BJ-9000", page.inner_text("#radioTitle") == "BJ-9000" and page.title().startswith("BJ-9000"))
+    page.select_option("#radioModel", "rt950pro")
+    check("switch to RT-950 Pro", page.inner_text("#radioTitle") == "RT-950 Pro")
+    page.select_option("#radioModel", "bj9000")
     page.screenshot(path=str(HERE / "shot_1_start.png"), full_page=True)
     page.click("#btnConnect")
     page.wait_for_function("document.getElementById('s1').textContent.startsWith('Connected')", timeout=10000)
     check("connected + unlock sent", page.evaluate("window.__SIM.unlock") == "3f3f3f3f022e171d5e57252f57136256044b2342")
 
+    page.evaluate("window.__SIM.model = 'BJ-9000'")
     page.click("#btnRead")
-    page.wait_for_function("document.getElementById('s2').className.includes('ok')", timeout=60000)
-    check("read shows model", 'Model "RT-950"' in page.inner_text("#s2"))
+    page.wait_for_function("document.getElementById('s2').className.includes('warn')", timeout=60000)
+    check("unexpected model: nothing read, accept offered", 'identifies itself as "BJ-9000"' in page.inner_text("#s2") and page.is_visible("#btnAcceptModel") and page.evaluate("window.__SIM.writes.length") == 0)
+    page.click("#btnAcceptModel")
+    check("model accepted", page.input_value("#extraModel") == "BJ-9000")
+    page.click("#btnRead")
+    page.wait_for_function("document.getElementById('s2').textContent.includes('channels in use')", timeout=60000)
+    check("read shows model", 'Model "BJ-9000"' in page.inner_text("#s2"))
     check("backup stored on phone", page.evaluate("!!localStorage.getItem('bj_last_backup')"))
     with page.expect_download() as dl:
         page.click("#btnSaveBk")
@@ -90,10 +101,44 @@ with sync_playwright() as p:
     check("restore verified", "verified" in page.inner_text("#s5"))
     check("radio back to original", page.evaluate(
         "() => window.__SIM.mem.every((v,i)=>v===window.__SIM.original[i])"))
+    # ---- CB template: append to zone 2, then over-limit is refused
+    page.click("text=Add CB 40 channels (27 MHz)")
+    page.select_option("#cbZone", "2")
+    page.click("#btnCbAppend")
+    check("CB appended to zone 2", "Added 40 CB channels to zone 2 (now 41)" in page.inner_text("#sCb"))
+    check("zone list updated", page.inner_text("#zsrc") == "Loaded: 2 zones, 43 channels.")
+    page.click("#btnCbAppend"); page.click("#btnCbAppend")
+    check("CB over 99 refused", "max is 99" in page.inner_text("#sCb") and page.inner_text("#zsrc") == "Loaded: 2 zones, 83 channels.")
+
+    # ---- APRS: read, phone location, edit, preview, write (link drops), verify, undo
+    page.click("#btnAprsRead")
+    page.wait_for_function("document.getElementById('sA').className.includes('ok')", timeout=20000)
+    check("APRS read", 'Callsign "N0CALL"-9' in page.inner_text("#sA"))
+    page.click("#btnGps")
+    page.wait_for_function("document.getElementById('sA2').textContent.startsWith('Position set')", timeout=10000)
+    check("phone location -> DMS", page.input_value("#ap_lon_deg") == "104" and page.input_value("#ap_lon_min") == "59" and page.input_value("#ap_lon_sec") == "25" and page.input_value("#ap_lat_ns") == "N")
+    page.fill("#ap_call", "test1"); page.select_option("#ap_ssid", "7"); page.select_option("#ap_aprs_on", "1")
+    page.select_option("#ap_beacon_time", "4")
+    page.click("#btnAprsPreview")
+    prev = page.inner_text("#sA2")
+    check("APRS preview lists changes", "Callsign: N0CALL → TEST1" in prev and "SSID: 9 → 7" in prev and "Timed beacon interval: 30 s → 5 min" in prev)
+    page.click("#btnAprsWrite"); page.check("#dlgFw"); page.check("#dlgBk"); page.click("#dlgYes")
+    page.wait_for_function("document.getElementById('sA2').className.match(/ok|bad|warn/)", timeout=90000)
+    check("APRS written + verified after reconnect", "written and verified" in page.inner_text("#sA2"))
+    st = page.evaluate("() => ({ r: window.__SIM.reconnects, wr: window.__SIM.aprsWithResponse, call: String.fromCharCode(...window.__SIM.aprs.subarray(17,23)), ssid: window.__SIM.aprs[23], chOk: window.__SIM.mem.subarray(0x8000).every((v,i)=>v===window.__SIM.original[0x8000+i]) })")
+    check("BLE dropped + reconnected", st["r"] >= 1)
+    check("APRS frame with response", st["wr"] is True)
+    check("radio APRS has TEST1-7", st["call"].startswith("TEST1") and st["ssid"] == 7)
+    check("settings outside APRS untouched", st["chOk"])
+    page.screenshot(path=str(HERE / "shot_4_aprs.png"), full_page=True)
+    page.click("#btnAprsUndo"); page.check("#dlgFw"); page.check("#dlgBk"); page.click("#dlgYes")
+    page.wait_for_function("document.getElementById('sA2').textContent.includes('restored') || document.getElementById('sA2').className.includes('bad')", timeout=90000)
+    check("APRS undo restores original", page.evaluate("() => window.__SIM.aprs.every((v,i)=>v===window.__SIM.aprsOriginal[i])"))
+
     # loaded channels survive a reload on the same phone, and can be cleared
     page.reload()
     page.wait_for_function("document.getElementById('zsrc').textContent.length > 0")
-    check("channels remembered after reload", page.inner_text("#zsrc") == "Loaded: 2 zones, 3 channels.")
+    check("channels remembered after reload", page.inner_text("#zsrc") == "Loaded: 2 zones, 83 channels.")
     page.click("#btnClearZones")
     check("clear removes them", page.inner_text("#zsrc") == "No channels loaded." and page.evaluate("!localStorage.getItem('bj_zones')"))
     check("no page errors", not errors)

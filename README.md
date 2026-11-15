@@ -1,7 +1,9 @@
-# BJ-9000 / RT-950 Pro Bluetooth Programmer (web app)
+# BJ-9000 / RT-950 Pro Bluetooth Programmer (web app) v1.1.0
 
-`index.html` is the whole app. It programs a Bajeton BJ-9000 / Radtel RT-950 Pro over Bluetooth LE
-from a phone browser. **It contains no channel data.** You load your own zone CSV files on the phone.
+`index.html` is the whole app. It programs a **Bajeton BJ-9000** or **Radtel RT-950 Pro** over Bluetooth LE from a phone
+browser. The two are the same hardware with the same programming protocol, so pick yours at the top of the page.
+That choice only changes the names the app shows and expects.
+**The app contains no channel data.** You load your own zone CSV files on the phone.
 
 ## Phone browser
 
@@ -12,41 +14,66 @@ from a phone browser. **It contains no channel data.** You load your own zone CS
 
 Web Bluetooth only runs on an **https://** address, e.g. this repo's GitHub Pages site.
 
-## Use
+## Channels
 
-1. Radio: Bluetooth **on** and **not** connected to the Radtel app.
+1. Choose your radio. On the radio, turn Bluetooth **on** and make sure it is **not** connected to the manufacturer's phone app.
 2. **Connect** → pick the radio. If it isn't listed, tick *Show all Bluetooth devices*.
 3. **Read radio.** A backup is kept on the phone. Also tap **Download backup**.
-4. **Choose zone CSV files** and multi-select your `ZoneNN_NAME.csv` files.
-   They stay on the phone and are never uploaded. *Remember on this phone* is optional.
-5. **Preview changes** → **Write to radio** → tick both boxes → Write. Keep the screen on until it finishes.
-   Every written block is read back and verified.
-6. **Undo last write** restores the exact pre-write state.
+   If the radio reports a model name other than "RT-950", the app stops and shows the name, with a
+   one-tap button to accept it as your radio.
+4. **Choose zone CSV files** and multi-select your `ZoneNN_NAME.csv` files. They stay on the phone.
+5. **Preview changes** → **Write to radio**. Every written block is read back and verified.
+   **Undo last write** restores the exact pre-write state.
 
-## Zone CSV format
+### Zone CSV format
 
-CHIRP CSV columns (`Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,...`).
+CHIRP CSV columns (`Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,...`).
 The file name sets the zone: `Zone03_LOCAL.csv` = zone 3, named "LOCAL" (max 12 chars).
 A zone file replaces that whole zone. Zones without a file are left untouched.
-`Duplex` = `off` → TX disabled. `Mode` = `AM` → AM receive. Names are limited to 12 characters.
+`Duplex` = `off` → TX disabled. `Mode` = `AM` → AM receive.
+
+### 27 MHz CB
+
+Under *Add CB 40 channels* in step 3 you can append the 40 US CB channels to a zone, or replace a zone with them.
+The radio transmits **FM only** on 27 MHz. CB channels work only after you switch the radio itself to
+**Menu › Radio Set › Work Band › 18–64 MHz** (the radio restarts) and fit a 27 MHz antenna.
+Switch back to 64–999 MHz for VHF/UHF. The app can't toggle Work Band because that setting isn't in a mapped memory area.
+
+## APRS
+
+Section **A** reads the radio's APRS settings block and edits:
+
+- **Basic:** enable, GPS, callsign, SSID, symbol, beacon interval, path, position source
+- **Fixed position:** lat/lon/altitude. Fill it with **Use phone location**, or paste a decimal `lat, lon`.
+- **Optional:** beacon message, PATH1/PATH2, and advanced raw values.
+
+How it writes:
+
+- Only the fields you change are written. Every other byte stays as read.
+- The radio saves the block and may drop Bluetooth. The app reconnects and reads it back to verify.
+- **Undo APRS change** restores the previous settings.
+
+Fields marked **\*** have option mappings taken from the manual's menu order that haven't been confirmed on hardware.
+The current raw value is shown, and the field is left alone unless you change it.
+APRS transmits on the frequency of the channel/VFO it uses. Put your APRS frequency (144.390 MHz in the US) in a channel.
+A callsign requires an amateur radio licence.
 
 ## Safety
 
-- **Writes:** channel memory and zone names only, and only the 128-byte blocks that change.
-- **Never writes:** VFO, settings, DTMF, APRS, or channels 961–990 / 0x7800+ (unless *Allow writing channels 961–990* is ticked under Advanced).
+- **Channel writes** cover only channel memory and zone names, and only the 128-byte blocks that change.
+  VFO, settings, DTMF and channels 961–990 (0x7800+) are never written unless you allow it under Advanced.
+- **APRS writes** cover only the 128-byte APRS block, and only from section A.
 - **Firmware layout:** pick 0.24+ (10 zones × 99) or older (15 zones × 64) to match **Menu › About**.
-- **Model check:** the radio must report "RT-950". If yours reports another name, add it under **Advanced**.
 
 ## Source & tests
 
-- `src/core.js`: protocol, BLE link, record encoding
-- `src/template.html`: UI. Build with `node src/build.js index.html`
-- `node src/test_ble_sim.js`: protocol against a simulated radio over a BLE-like link
+- `src/core.js`: protocol, BLE link, channel + APRS encoding. Build with `node src/build.js index.html`.
+- `node src/test_ble_sim.js`: protocol, APRS (incl. the link dropping after commit), CB template against a simulated radio
 - `python3 src/test_ui.py`: full UI in headless Chromium with mocked Web Bluetooth (needs Playwright)
 
 ## Credits / status
 
-Protocol, BLE details (ffe1 data/notify, ff31 unlock, 20-byte writes) and memory map come from the
+Protocol, BLE details (ffe1 data/notify, ff31 unlock, 20-byte writes), and channel/APRS memory maps come from the
 MIT-licensed RT-950 Pro work of Nathan G. Barguss (2E0NBS), PE1HVH and nivingoonesekera.
-See `THIRD_PARTY_LICENSE_rt950pro_driver.txt`. This is an independent implementation.
-It has been tested against simulated radios. Keep your backups. Use at your own risk.
+See `THIRD_PARTY_LICENSE_rt950pro_driver.txt`. This is an independent implementation, tested against simulated radios.
+Keep your backups. Use at your own risk.

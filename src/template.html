@@ -23,7 +23,8 @@
   button:disabled { opacity:.4; }
   .row { display:flex; gap:8px; } .row > * { flex:1; }
   label { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:14px; }
-  select, input[type=text] { font:inherit; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; width:100%; }
+  label[style*="block"] > select, label[style*="block"] > input { margin-top:4px; }
+  select, input[type=text], input[type=number] { font:inherit; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; width:100%; }
   .status { font-size:14px; color:var(--dim); margin-top:6px; white-space:pre-wrap; }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
   progress { width:100%; height:10px; margin-top:8px; accent-color:var(--acc); }
@@ -40,15 +41,24 @@
 </head>
 <body>
 <header>
-  <h1>BJ-9000 / RT-950 Pro · Bluetooth Programmer</h1>
+  <h1><span id="radioTitle">BJ-9000</span> · Bluetooth Programmer</h1>
   <div class="sub">v<span id="ver"></span> · writes channels &amp; zone names only · settings, APRS, calibration untouched</div>
 </header>
 <main>
   <div id="support" class="banner" hidden></div>
 
+  <section class="card" id="c0">
+    <label>Your radio
+      <select id="radioModel">
+        <option value="bj9000">Bajeton BJ-9000</option>
+        <option value="rt950pro">Radtel RT-950 Pro</option>
+      </select></label>
+    <div class="sub">Same hardware and programming protocol; this sets the names the app expects.</div>
+  </section>
+
   <section class="card" id="c1">
     <h2><span class="num">1</span>Connect</h2>
-    <div class="sub">Radio on, Bluetooth on (radio menu), <b>not</b> connected to the Radtel phone app.</div>
+    <div class="sub">Radio on, Bluetooth on (radio menu), <b>not</b> connected to the manufacturer phone app.</div>
     <button id="btnConnect">Connect to radio</button>
     <label><input type="checkbox" id="showAll"> Show all Bluetooth devices (if the radio isn't listed)</label>
     <div class="status" id="s1">Not connected.</div>
@@ -59,6 +69,7 @@
     <button id="btnRead" disabled>Read radio</button>
     <progress id="p2" value="0" max="1" hidden></progress>
     <div class="status" id="s2">Reads ~260 blocks (about 1–2 min). Nothing is written.</div>
+    <button class="secondary" id="btnAcceptModel" hidden></button>
     <div class="row"><button class="secondary" id="btnSaveBk" disabled>Download backup</button><button class="secondary" id="btnCopyBk" disabled>Copy backup</button></div>
   </section>
 
@@ -71,6 +82,18 @@
     <table id="ztab"></table>
     <label><input type="checkbox" id="remember" checked> Remember these files on this phone only (never uploaded anywhere)</label>
     <button class="secondary" id="btnClearZones">Clear loaded channels</button>
+    <details><summary>Add CB 40 channels (27 MHz)</summary>
+      <div class="sub">US CB channels 1–40, simplex, no tones. The radio transmits FM only on 27 MHz.
+        To use them, switch the radio to <b>Menu › Radio Set › Work Band › 18–64 MHz</b> (the radio restarts) and fit a 27 MHz antenna;
+        switch back to 64–999 MHz for VHF/UHF.</div>
+      <div class="row">
+        <label>Zone <select id="cbZone"></select></label>
+        <label>Mode <select id="cbMode"><option value="NFM">FM narrow</option><option value="FM">FM wide</option></select></label>
+      </div>
+      <label>Zone name (new zone only) <input type="text" id="cbName" value="CB 40" maxlength="12"></label>
+      <div class="row"><button class="secondary" id="btnCbAppend">Append to zone</button><button class="secondary" id="btnCbReplace">Replace zone</button></div>
+      <div class="status" id="sCb"></div>
+    </details>
   </section>
 
   <section class="card" id="c4">
@@ -81,6 +104,28 @@
     <div class="status" id="s4">Read the radio first.</div>
     <button class="danger" id="btnWrite" disabled>Write to radio</button>
     <progress id="p4" value="0" max="1" hidden></progress>
+  </section>
+
+  <section class="card" id="cA">
+    <h2><span class="num">A</span>APRS settings</h2>
+    <div class="sub">Edits only the radio's APRS settings block. APRS transmits on the frequency of the channel/VFO it is set to use — put your APRS frequency (144.390 MHz in the US) in a channel. Labels marked * have an unconfirmed value mapping: their current raw value is shown and left alone unless you change it.</div>
+    <button id="btnAprsRead" disabled>Read APRS settings</button>
+    <div class="status" id="sA">Connect first.</div>
+    <form id="aprsForm" hidden onsubmit="return false">
+      <div id="aprsBasic"></div>
+      <h3 class="sub" style="margin:12px 0 4px">Fixed position</h3>
+      <div class="row"><button type="button" class="secondary" id="btnGps">Use phone location</button></div>
+      <label>…or paste decimal "lat, lon" <input type="text" id="decPos" placeholder="39.7392, -104.9903" autocomplete="off"></label>
+      <div id="aprsPos"></div>
+      <details><summary>Beacon message</summary><div id="aprsMsg"></div></details>
+      <details><summary>User paths (PATH1 / PATH2)</summary><div id="aprsPaths"></div></details>
+      <details><summary>Advanced (raw values)</summary><div id="aprsAdv"></div></details>
+      <button type="button" id="btnAprsPreview">Preview APRS changes</button>
+      <div class="status" id="sA2"></div>
+      <button type="button" class="danger" id="btnAprsWrite" disabled>Write APRS settings</button>
+      <div class="row"><button type="button" class="secondary" id="btnAprsUndo" disabled>Undo APRS change</button>
+        <button type="button" class="secondary" id="btnAprsBk" disabled>Download APRS backup</button></div>
+    </form>
   </section>
 
   <section class="card" id="c5">
@@ -108,8 +153,8 @@
 <dialog id="dlg">
   <h3 style="margin-top:0">Write to radio?</h3>
   <div id="dlgBody" class="status"></div>
-  <label><input type="checkbox" id="dlgFw"> My radio's firmware matches the layout I picked</label>
-  <label><input type="checkbox" id="dlgBk"> I have the backup from step 2</label>
+  <label><input type="checkbox" id="dlgFw"> <span id="dlgFwT">My radio's firmware matches the layout I picked</span></label>
+  <label><input type="checkbox" id="dlgBk"> <span id="dlgBkT">I have the backup from step 2</span></label>
   <div class="row"><button class="secondary" id="dlgNo">Cancel</button><button class="danger" id="dlgYes" disabled>Write</button></div>
 </dialog>
 
@@ -127,10 +172,21 @@
   const setStatus = (id, msg, cls = "") => { const el = $(id); el.textContent = msg; el.className = "status " + cls; };
 
   let link = null, image = null, backup = null, zones = [], lastBlocks = null, busy = false, wakeLock = null;
+  let aprs = null, aprsVals = null, aprsPlan = null;
   try { const saved = JSON.parse(store.get("bj_zones") || "null"); if (Array.isArray(saved)) zones = saved; } catch (e) { }
   $("extraModel").value = store.get("bj_extra_model") || "";
   $("extraModel").addEventListener("change", e => store.set("bj_extra_model", e.target.value.trim()));
   const opts = () => ({ allowedModels: ["RT-950"].concat($("extraModel").value.trim() ? [$("extraModel").value.trim()] : []), log });
+  // Radio choice: wording + expected Bluetooth name. Protocol is identical for both.
+  const RADIOS = { bj9000: { title: "Bajeton BJ-9000", short: "BJ-9000", hint: "BJ" }, rt950pro: { title: "Radtel RT-950 Pro", short: "RT-950 Pro", hint: "RT" } };
+  const radio = () => RADIOS[$("radioModel").value] || RADIOS.bj9000;
+  $("radioModel").value = store.get("bj_radio") || "bj9000";
+  function applyRadio() {
+    $("radioTitle").textContent = radio().short;
+    document.title = `${radio().short} Bluetooth Programmer`;
+    store.set("bj_radio", $("radioModel").value);
+  }
+  $("radioModel").onchange = applyRadio; applyRadio();
 
   // browser support
   if (!navigator.bluetooth) {
@@ -173,6 +229,10 @@
     $("btnSaveBk").disabled = $("btnCopyBk").disabled = !backup;
     $("btnLastBk").disabled = !(conn && store.get("bj_prewrite_backup"));
     $("btnWrite").disabled = !(conn && image && plan && plan.blocks.length);
+    $("btnAprsRead").disabled = !conn;
+    $("btnAprsWrite").disabled = !(conn && aprs && aprsPlan && aprsPlan.changed.length);
+    $("btnAprsUndo").disabled = !(conn && aprs && store.get("bj_aprs_prewrite"));
+    $("btnAprsBk").disabled = !aprs;
   }
   let plan = null;
   function invalidatePlan() { plan = null; if (image) setStatus("s4", "Tap Preview changes."); refreshButtons(); }
@@ -190,9 +250,18 @@
   // 2 read
   $("btnRead").onclick = () => guard(async () => {
     $("p2").hidden = false; $("p2").value = 0; setStatus("s2", "Reading…");
+    $("btnAcceptModel").hidden = true;
     try {
       image = await BJ.readImage(link, opts(), (d, t) => { $("p2").max = t; $("p2").value = d; });
-    } catch (e) { setStatus("s2", "Read failed: " + e.message, "bad"); return; }
+    } catch (e) {
+      const m = /model "([^"]*)" not allowed/.exec(e.message);
+      if (m) {   // unexpected model name: let the user confirm it's their radio
+        setStatus("s2", `The radio identifies itself as "${m[1]}" (not "RT-950"). Nothing was read or written.\nIf this is your ${radio().title}, tap below to accept it, then Read again.`, "warn");
+        const b = $("btnAcceptModel"); b.hidden = false; b.dataset.was = "false"; b.textContent = `This is my ${radio().short} — accept "${m[1]}"`;
+        b.onclick = () => { $("extraModel").value = m[1]; store.set("bj_extra_model", m[1]); b.hidden = true; log(`Accepted model "${m[1]}".`); setStatus("s2", `Accepted "${m[1]}". Tap Read radio.`, "ok"); };
+      } else setStatus("s2", "Read failed: " + e.message, "bad");
+      return;
+    }
     backup = BJ.backupJSON(image);
     store.set("bj_last_backup", backup.text); store.set("bj_last_backup_name", backup.name);
     const names = BJ.zoneNames(image.zn).map((n, i) => n ? `${i + 1}:${n}` : "").filter(Boolean).join("  ");
@@ -250,7 +319,9 @@
     refreshButtons();
   };
   let pending = null;
-  function confirmWrite(text, action) {
+  function confirmWrite(text, action, checks) {
+    checks = checks || ["My radio's firmware matches the layout I picked", "I have the backup from step 2"];
+    $("dlgFwT").textContent = checks[0]; $("dlgBkT").textContent = checks[1];
     $("dlgBody").textContent = text + "\nKeep the phone near the radio and the screen on until it finishes.";
     $("dlgFw").checked = $("dlgBk").checked = false; $("dlgYes").disabled = true; pending = action; $("dlg").showModal();
   }
@@ -311,6 +382,146 @@
   $("btnPickBk").onclick = () => $("bkIn").click();
   $("bkIn").onchange = async e => { const f = e.target.files[0]; if (f) restore(await f.text()); };
   $("btnCopyLog").onclick = async () => { try { await navigator.clipboard.writeText(logEl.textContent); } catch (e) { } };
+
+  // ------------------------------------------------------------ CB 40 template
+  function fillCbZones() {
+    const L = BJ.LAYOUTS[$("layout").value], sel = $("cbZone"), keep = sel.value;
+    sel.innerHTML = Array.from({ length: L.zones }, (_, i) => {
+      const z = zones.find(x => x.zone === i + 1);
+      return `<option value="${i + 1}">${i + 1}${z ? " · " + esc(z.name) + " (" + z.rows.length + ")" : " · empty"}</option>`;
+    }).join("");
+    if (keep) sel.value = keep;
+  }
+  function addCb(replace) {
+    const L = BJ.LAYOUTS[$("layout").value], zn = parseInt($("cbZone").value, 10);
+    const rows = BJ.cbRows($("cbMode").value);
+    let z = zones.find(x => x.zone === zn);
+    const before = z ? z.rows.length : 0;
+    if (!z) { z = { zone: zn, name: ($("cbName").value || "CB 40").slice(0, 12), rows: [] }; zones.push(z); }
+    if (replace) z.rows = rows; else z.rows = z.rows.concat(rows);
+    if (z.rows.length > L.per) {
+      z.rows = z.rows.slice(0, before); if (!before && !replace) zones = zones.filter(x => x !== z);
+      setStatus("sCb", `Zone ${zn} would have ${before + rows.length} channels; max is ${L.per}. Pick another zone or Replace.`, "bad"); fillCbZones(); return;
+    }
+    if ($("remember").checked) store.set("bj_zones", JSON.stringify(zones));
+    setStatus("sCb", `${replace ? "Zone " + zn + " replaced with" : "Added"} 40 CB channels${replace ? "" : " to zone " + zn} (now ${z.rows.length}).`, "ok");
+    log(`CB 40 template ${replace ? "replaced" : "appended to"} zone ${zn}.`);
+    renderZones(); fillCbZones(); invalidatePlan();
+  }
+  $("btnCbAppend").onclick = () => addCb(false);
+  $("btnCbReplace").onclick = () => addCb(true);
+  $("layout").addEventListener("change", fillCbZones);
+  $("csvIn").addEventListener("change", () => setTimeout(fillCbZones, 300));
+  $("btnClearZones").addEventListener("click", fillCbZones);
+  fillCbZones();
+
+  // ------------------------------------------------------------------- APRS
+  const F = Object.fromEntries(BJ.APRS_FIELDS.map(f => [f.key, f]));
+  function fieldHtml(f, v) {
+    const id = "ap_" + f.key, star = f.confirmed ? "" : " *";
+    let input;
+    if (f.opts && (v === null || v < f.opts.length)) {
+      input = `<select id="${id}">${v === null ? '<option value="">(not set)</option>' : ""}${f.opts.map((o, i) => `<option value="${i}" ${i === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    } else if (f.kind === "hemi") {
+      input = `<select id="${id}">${v === null ? '<option value="">(not set)</option>' : ""}${f.chars.map(c => `<option ${c === v ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+    } else if (f.kind === "ascii" || f.kind === "text") {
+      input = `<input type="text" id="${id}" value="${esc(v || "")}" maxlength="${f.len}" autocomplete="off" ${f.kind === "ascii" ? 'autocapitalize="characters" style="text-transform:uppercase"' : ""}>`;
+    } else {
+      input = `<input type="number" inputmode="numeric" id="${id}" value="${v === null ? "" : v}" placeholder="(not set)">`;
+    }
+    const raw = (!f.confirmed && v !== null && !(f.kind === "ascii" || f.kind === "text")) ? ` <span class="ch">raw ${v}</span>` : "";
+    return `<label style="display:block">${esc(f.label)}${star}${raw}${input}</label>`;
+  }
+  function renderAprs() {
+    const groups = { basic: "aprsBasic", pos: "aprsPos", msg: "aprsMsg", paths: "aprsPaths", adv: "aprsAdv" };
+    for (const [g, el] of Object.entries(groups)) $(el).innerHTML = BJ.APRS_FIELDS.filter(f => f.group === g).map(f => fieldHtml(f, aprsVals[f.key])).join("");
+    BJ.APRS_FIELDS.forEach(f => { const el = $("ap_" + f.key); el.addEventListener("input", invalidateAprs); el.addEventListener("change", invalidateAprs); });
+    $("aprsForm").hidden = false;
+  }
+  function invalidateAprs() { aprsPlan = null; setStatus("sA2", "Tap Preview APRS changes."); refreshButtons(); }
+  function collectAprs() {
+    const edits = {};
+    for (const f of BJ.APRS_FIELDS) {
+      const raw = $("ap_" + f.key).value;
+      let v;
+      if (f.kind === "ascii") v = raw.toUpperCase().trim();
+      else if (f.kind === "text") v = raw;
+      else if (f.kind === "hemi") { if (raw === "") continue; v = raw; }
+      else { if (raw === "") continue; v = Number(raw); }
+      if (v !== aprsVals[f.key] && !(v === "" && !aprsVals[f.key])) edits[f.key] = v;
+    }
+    return edits;
+  }
+  $("btnAprsRead").onclick = () => guard(async () => {
+    setStatus("sA", "Reading APRS block…");
+    try { aprs = await BJ.readAprs(link, opts()); } catch (e) { setStatus("sA", "Read failed: " + e.message, "bad"); return; }
+    aprsVals = BJ.parseAprs(aprs); aprsPlan = null;
+    store.set("bj_aprs_last", BJ.toHex(aprs));
+    setStatus("sA", `Read OK. Callsign "${aprsVals.call || "(none)"}"-${aprsVals.ssid ?? "?"}, APRS ${aprsVals.aprs_on ? "ON" : "OFF"}.`, "ok");
+    renderAprs();
+  });
+  $("btnGps").onclick = () => {
+    if (!navigator.geolocation) { setStatus("sA2", "This browser can't read the phone's location.", "bad"); return; }
+    setStatus("sA2", "Getting phone location…");
+    navigator.geolocation.getCurrentPosition(p => applyDecimal(p.coords.latitude, p.coords.longitude, p.coords.altitude),
+      e => setStatus("sA2", "Location unavailable: " + e.message, "bad"), { enableHighAccuracy: true, timeout: 20000 });
+  };
+  $("decPos").addEventListener("change", e => {
+    const m = e.target.value.match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
+    if (!m) { setStatus("sA2", 'Use "lat, lon" in decimal degrees, e.g. 39.7392, -104.9903', "bad"); return; }
+    applyDecimal(parseFloat(m[1]), parseFloat(m[2]), null);
+  });
+  function applyDecimal(lat, lon, altM) {
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) { setStatus("sA2", "Coordinates out of range.", "bad"); return; }
+    const a = BJ.decimalToDMS(lat, true), o = BJ.decimalToDMS(lon, false);
+    $("ap_lat_ns").value = a.hemi; $("ap_lat_deg").value = a.d; $("ap_lat_min").value = a.m; $("ap_lat_sec").value = a.s;
+    $("ap_lon_ew").value = o.hemi; $("ap_lon_deg").value = o.d; $("ap_lon_min").value = o.m; $("ap_lon_sec").value = o.s;
+    let note = "";
+    if (altM !== null && altM !== undefined && isFinite(altM)) {
+      const ft = aprsVals.alt_unit === 1;   // [ASSUMED] 1 = feet per manual order Meter/Foot
+      $("ap_alt").value = Math.round(ft ? altM * 3.28084 : altM); note = ` alt ${$("ap_alt").value} ${ft ? "ft" : "m"}`;
+    }
+    setStatus("sA2", `Position set: ${a.d}°${a.m}'${a.s}"${a.hemi} ${o.d}°${o.m}'${o.s}"${o.hemi}${note}. Tap Preview.`, "ok");
+    invalidateAprs(); setStatus("sA2", `Position set: ${a.d}°${a.m}'${a.s}"${a.hemi} ${o.d}°${o.m}'${o.s}"${o.hemi}${note}. Tap Preview.`, "ok");
+  }
+  $("btnAprsPreview").onclick = () => {
+    try { aprsPlan = BJ.encodeAprs(aprs, collectAprs()); }
+    catch (e) { aprsPlan = null; setStatus("sA2", "Cannot write: " + e.message, "bad"); refreshButtons(); return; }
+    const fmt = (f, v) => v === null || v === "" ? "(not set)" : (F[f].opts && typeof v === "number" && F[f].opts[v] !== undefined ? F[f].opts[v] : String(v));
+    setStatus("sA2", aprsPlan.changed.length ? aprsPlan.changed.map(c => `${c.label}: ${fmt(c.key, c.from)} → ${fmt(c.key, c.to)}`).join("\n") : "No changes.", aprsPlan.changed.length ? "" : "ok");
+    refreshButtons();
+  };
+  async function writeAprsBlock(block, sid, isUndo) {
+    return guard(async () => {
+      setStatus(sid, "Checking radio still matches what was read…");
+      const now = await BJ.readAprs(link, opts());
+      if (!BJ.eq(now, aprs)) { setStatus(sid, "APRS settings changed on the radio since you read them. Read again first.", "bad"); return; }
+      if (!isUndo) store.set("bj_aprs_prewrite", BJ.toHex(aprs));
+      setStatus(sid, "Writing APRS block (the radio may drop Bluetooth while it saves)…");
+      try { await BJ.writeAprs(link, opts(), block); }
+      catch (e) { setStatus(sid, `Write stopped: ${e.message}. Reconnect, read APRS and check.`, "bad"); return; }
+      setStatus(sid, "Saved. Reconnecting to verify…");
+      await BJ.sleep(3000);
+      let back;
+      try { back = await BJ.readAprs(link, opts()); }
+      catch (e) { setStatus(sid, `Written, but couldn't verify (${e.message}). Reconnect and tap Read APRS settings.`, "warn"); return; }
+      if (!BJ.eq(back, block)) { setStatus(sid, "VERIFY FAILED: APRS block on the radio differs. Use Undo APRS change.", "bad"); return; }
+      aprs = back; aprsVals = BJ.parseAprs(aprs); aprsPlan = null; renderAprs();
+      setStatus(sid, isUndo ? "APRS settings restored and verified." : "APRS settings written and verified.", "ok");
+    });
+  }
+  $("btnAprsWrite").onclick = () => {
+    const n = aprsPlan.changed.length, block = aprsPlan.block;
+    confirmWrite(`Write ${n} APRS setting${n > 1 ? "s" : ""} to radio "${link.device?.name || ""}".`, () => writeAprsBlock(block, "sA2", false),
+      ["I checked the changes above", "Callsign and SSID are mine"]);
+  };
+  $("btnAprsUndo").onclick = () => {
+    const pre = BJ.hex(store.get("bj_aprs_prewrite"));
+    if (BJ.eq(pre, aprs)) { setStatus("sA2", "Radio already matches the pre-write APRS settings.", "ok"); return; }
+    confirmWrite("Restore the APRS settings saved before your last APRS write.", () => writeAprsBlock(pre, "sA2", true),
+      ["Restore previous APRS settings", "I understand this overwrites the current APRS settings"]);
+  };
+  $("btnAprsBk").onclick = () => download(`bj9000_aprs_${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ tool: "bj9000_web " + BJ.VERSION, aprs: BJ.toHex(aprs) }));
 
   log(`Ready. ${navigator.bluetooth ? "Web Bluetooth available." : "No Web Bluetooth in this browser."}`);
   refreshButtons();

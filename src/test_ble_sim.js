@@ -22,10 +22,28 @@ class SimRadio {
     for (const s of [0, 1, 50, 900, 960, 975]) this.mem.set(BJ.buildRecord({ Frequency: (146 + s / 1000).toFixed(4), Name: "OLD" + s, Mode: "FM" }), s * 32);
     this.mem.fill(0xFF, 0xC000, 0xC100); this.mem.set(Array.from("OLDZONE1", c => c.charCodeAt(0)), 0xC000);
     this.original = new Uint8Array(this.mem);
+    // APRS block: realistic factory-ish content, message NUL-padded like the CPS writes it
+    this.aprs = new Uint8Array(128).fill(0x00);
+    this.aprs.set([0, 1, 0, 0, 0, 0, 8, 0x4E, 44, 39, 21, 0x57, 59, 104, 10, 0x64, 0x00], 0);
+    this.aprs.set(Array.from("N0CALL", c => c.charCodeAt(0)), 17);
+    this.aprs[23] = 9; this.aprs[24] = 2; this.aprs[25] = 1; this.aprs[26] = 2; this.aprs[27] = 0x85; this.aprs[36] = 0;
+    this.aprs.set(Array.from("Hello world!", c => c.charCodeAt(0)), 79);
+    this.aprs.fill(0xFF, 119, 128);
+    this.aprsOriginal = new Uint8Array(this.aprs);
+    this.dropped = false; this.aprsWithResponse = null;
     Object.assign(this, { model, strayAck, dropFirstHandshake, corrupt, dropReadOnce });
     this.inb = []; this.state = "idle"; this.key = null; this.writes = []; this.handshakes = 0; this.unlocked = false;
     this.chunks = 0;
-    this.link = { onData: null, write: BJ.chunkedWriter(async b => { this.chunks++; await this._rx(b); }), ensure: async () => { if (!this.unlocked) { this.unlocked = true; this._notify([0x21, 0x4F, 0x4B]); } } };
+    this.link = { onData: null,
+      write: BJ.chunkedWriter(async (b, o) => {
+        if (this.dropped) throw new Error("Bluetooth link is down");
+        if (b[0] === 0x58 && this.state === "open") this.aprsWithResponse = !!o.withResponse;
+        this.chunks++; await this._rx(b);
+      }),
+      ensure: async () => {
+        if (this.dropped) { this.dropped = false; this.unlocked = false; this.state = "idle"; this.inb.length = 0; this.reconnects = (this.reconnects || 0) + 1; }
+        if (!this.unlocked) { this.unlocked = true; this._notify([0x21, 0x4F, 0x4B]); }
+      } };
   }
   _notify(bytes) {           // deliver as 20-byte BLE notifications, async
     for (let i = 0; i < bytes.length; i += 20) {
@@ -72,6 +90,19 @@ class SimRadio {
           const h = b.splice(0, 4), a = (h[1] << 8) | h[2];
           if (this.dropReadOnce === a) { this.dropReadOnce = null; continue; }   // lost request
           this._notify([...h, ...this._xor(this.mem.subarray(a, a + h[3]))]); continue;
+        }
+        if (b[0] === 0x54) {
+          if (b.length < 4) return;
+          const h = b.splice(0, 4);
+          this._notify([...h, ...this._xor(this.aprs.subarray(0, 128))]); continue;
+        }
+        if (b[0] === 0x58) {
+          if (b.length < 132) return;
+          const f = b.splice(0, 132);
+          this.aprs.set(this._xor(new Uint8Array(f.slice(4))), 0); this.aprsWrites = (this.aprsWrites || 0) + 1;
+          this._notify([0x06]);
+          setTimeout(() => { this.dropped = true; }, 30);   // radio commits, then drops the BLE link
+          continue;
         }
         if (b[0] === 0x57) {
           if (b.length < 132) return;
@@ -192,6 +223,39 @@ async function fullWrite(sim, layout = "990", o = opts()) {
 
   // 10 Python-compatible backup format
   check("backup JSON round-trip", BJ.eq(BJ.parseBackup(bk.text).ch, sim.original.subarray(0, 0x8000)));
+
+  // 11 APRS: read, edit a few fields, write (link drops after commit), reconnect + verify
+  sim = new SimRadio(); await sim.link.ensure();
+  const ablk = await BJ.readAprs(sim.link, opts());
+  check("APRS read matches", BJ.eq(ablk, sim.aprs));
+  const ap = BJ.parseAprs(ablk);
+  check("APRS parse", ap.call === "N0CALL" && ap.ssid === 9 && ap.lat_ns === "N" && ap.lat_deg === 39 && ap.lat_min === 44 && ap.lon_ew === "W" && ap.lon_deg === 104 && ap.alt === 100 && ap.msg === "Hello world!" && ap.icon === 5);
+  const dms = BJ.decimalToDMS(-104.9903, false);
+  const { block: nb, changed } = BJ.encodeAprs(ablk, { aprs_on: 1, call: "test1", ssid: 7, beacon_time: 4, msg: "Mobile 146.52", lon_ew: dms.hemi, lon_deg: dms.d, lon_min: dms.m, lon_sec: dms.s, alt: 120 });
+  check("decimal->DMS", dms.hemi === "W" && dms.d === 104 && dms.m === 59 && dms.s === 25);
+  check("APRS only edited fields changed", changed.map(c => c.key).sort().join(",") === "alt,aprs_on,beacon_time,call,lon_sec,msg,ssid");
+  const diff = []; for (let i = 0; i < 128; i++) if (nb[i] !== ablk[i]) diff.push(i);
+  check("APRS byte diff limited to edited offsets", diff.every(i => [0, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 36].includes(i) || (i >= 79 && i < 119)));
+  check("message keeps NUL padding", nb[79 + 13] === 0x00 && nb[118] === 0x00);
+  check("icon high bit preserved", nb[27] === 0x85);
+  await BJ.writeAprs(sim.link, opts(), nb);
+  check("APRS frame sent with response", sim.aprsWithResponse === true);
+  await BJ.sleep(80);
+  check("link dropped after commit", sim.dropped === true);
+  const back = await BJ.readAprs(sim.link, opts());
+  check("reconnected + APRS verified", sim.reconnects === 1 && BJ.eq(back, nb) && BJ.eq(sim.aprs, nb));
+  check("channel memory untouched by APRS", BJ.eq(sim.mem, sim.original));
+  let bad = 0; for (const [k, v] of [["call", "TOOLONG1"], ["ssid", 16], ["lat_deg", 91], ["lat_ns", "X"], ["alt", 20000], ["msg", "x".repeat(41)]]) { try { BJ.encodeAprs(ablk, { [k]: v }); } catch (e) { bad++; } }
+  check("APRS validation rejects bad values", bad === 6);
+  // undo APRS
+  await BJ.writeAprs(sim.link, opts(), sim.aprsOriginal);
+  await BJ.sleep(80);
+  check("APRS undo", BJ.eq(await BJ.readAprs(sim.link, opts()), sim.aprsOriginal));
+
+  // 12 CB template rows encode (FM-only TX band 18-64 MHz)
+  const cb = BJ.cbRows();
+  const r23 = BJ.buildRecord(cb[22]), r1 = BJ.buildRecord(cb[0]);
+  check("CB 40 template: ch1 26.965, ch23 27.255, ch40 27.405", cb.length === 40 && BJ.decFreq(r1.subarray(0, 4)) === 26.965 && BJ.decFreq(r23.subarray(0, 4)) === 27.255 && BJ.decFreq(BJ.buildRecord(cb[39]).subarray(0, 4)) === 27.405 && (r1[15] & 0x03) === 0x02);
 
   for (const [n2, ok] of results) console.log((ok ? "PASS " : "FAIL ") + n2);
   console.log(`${results.filter(x => x[1]).length}/${results.length} passed`);

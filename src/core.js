@@ -5,7 +5,7 @@
  */
 (function (root) {
   "use strict";
-  const VERSION = "1.0.0";
+  const VERSION = "1.1.0";
   const HANDSHAKE = Array.from("PROGRAMBT9000U", c => c.charCodeAt(0));
   const ACK = 0x06, BLOCK = 0x80, REC = 32;
   const XOR_KEYS = ["BHT ", "CO 7", "A ES", " EIY", "M PQ", "XN Y", "RVB ", " HQP", "W RC", "MS N",
@@ -194,6 +194,117 @@
     return blocks;
   }
 
+  // ------------------------------------------------------------------- APRS
+  // 128-byte block in its own address space (read 0x54, write 0x58).
+  // Offsets per the PE1HVH/2E0NBS map. Options in `opts` follow the radio manual's
+  // menu order; `confirmed` marks values verified on hardware by those projects.
+  const APRS_ADDR = 0x0000, APRS_READ = 0x54, APRS_WRITE = 0x58;
+  const BEACON_TIMES = ["30 s", "1 min", "2 min", "3 min", "5 min", "10 min", "15 min", "20 min", "30 min", "60 min"];
+  const APRS_FIELDS = [
+    { key: "aprs_on", off: 0, kind: "nib", label: "APRS", opts: ["OFF", "ON"], group: "basic", confirmed: true },
+    { key: "gps_on", off: 1, kind: "nib", label: "GPS", opts: ["OFF", "ON"], group: "basic", confirmed: true },
+    { key: "call", off: 17, len: 6, kind: "ascii", label: "Callsign", group: "basic", confirmed: true },
+    { key: "ssid", off: 23, kind: "nib", label: "SSID", opts: [...Array(16).keys()].map(String), group: "basic", confirmed: true },
+    { key: "symbol", off: 26, kind: "nib", label: "Station symbol", opts: ["/L People", "/b Bicycle", "/> Car", "/R Vehicle", "User-defined"], group: "basic", confirmed: true },
+    { key: "icon", off: 27, kind: "byte", mask: 0x7F, max: 127, label: "User-defined icon (0-127)", group: "basic" },
+    { key: "beacon_time", off: 36, kind: "nib", label: "Timed beacon interval", opts: BEACON_TIMES, group: "basic", confirmed: true },
+    { key: "path", off: 24, kind: "nib", label: "Path", opts: ["OFF", "WIDE1-1", "WIDE1-1,WIDE2-1", "PATH1 (user)", "PATH2 (user)"], group: "basic" },
+    { key: "src_pos", off: 25, kind: "nib", label: "Position source", opts: ["Fixed position", "GPS position"], group: "basic" },
+    { key: "lat_ns", off: 7, kind: "hemi", chars: ["N", "S"], label: "Latitude N/S", group: "pos", confirmed: true },
+    { key: "lat_deg", off: 9, kind: "byte", max: 90, label: "Latitude degrees", group: "pos", confirmed: true },
+    { key: "lat_min", off: 8, kind: "byte", max: 59, label: "Latitude minutes", group: "pos", confirmed: true },
+    { key: "lat_sec", off: 10, kind: "byte", max: 59, label: "Latitude seconds", group: "pos", confirmed: true },
+    { key: "lon_ew", off: 11, kind: "hemi", chars: ["W", "E"], label: "Longitude W/E", group: "pos", confirmed: true },
+    { key: "lon_deg", off: 13, kind: "byte", max: 180, label: "Longitude degrees", group: "pos", confirmed: true },
+    { key: "lon_min", off: 12, kind: "byte", max: 59, label: "Longitude minutes", group: "pos", confirmed: true },
+    { key: "lon_sec", off: 14, kind: "byte", max: 59, label: "Longitude seconds", group: "pos", confirmed: true },
+    { key: "alt", off: 15, kind: "i16", label: "Fixed altitude (radio's altitude unit)", group: "pos", confirmed: true },
+    { key: "msg_on", off: 78, kind: "nib", label: "Send message with beacon", opts: ["OFF", "ON"], group: "msg" },
+    { key: "msg", off: 79, len: 40, kind: "text", label: "Message (40 chars)", group: "msg", confirmed: true },
+    { key: "digi1", off: 43, len: 6, kind: "ascii", label: "PATH1 call", group: "paths", confirmed: true },
+    { key: "digi1_ssid", off: 49, kind: "nib", label: "PATH1 SSID", opts: [...Array(16).keys()].map(String), group: "paths" },
+    { key: "digi2", off: 50, len: 6, kind: "ascii", label: "PATH2 call", group: "paths", confirmed: true },
+    { key: "digi2_ssid", off: 56, kind: "nib", label: "PATH2 SSID", opts: [...Array(16).keys()].map(String), group: "paths" },
+    { key: "latlon_unit", off: 2, kind: "nib", label: "Position format", group: "adv" },
+    { key: "speed_unit", off: 3, kind: "nib", label: "Speed unit", group: "adv" },
+    { key: "dist_unit", off: 4, kind: "nib", label: "Distance unit", group: "adv" },
+    { key: "alt_unit", off: 5, kind: "nib", label: "Altitude unit", group: "adv" },
+    { key: "tz", off: 6, kind: "nib", mask: 0x1F, max: 31, label: "Time zone (raw)", group: "adv" },
+    { key: "priority", off: 29, kind: "nib", label: "Priority (raw)", group: "adv" },
+    { key: "tx_delay", off: 30, kind: "nib", max: 9, label: "APRS TX delay (0-9 = 100-1000 ms)", group: "adv" },
+    { key: "ringer", off: 32, kind: "nib", label: "APRS ringer (0/1)", group: "adv" },
+    { key: "popup", off: 33, kind: "nib", label: "RX popup (0/1)", group: "adv" },
+    { key: "beacon_type", off: 34, kind: "nib", label: "Beacon TX type (raw)", group: "adv" },
+    { key: "mice", off: 38, kind: "nib", label: "MIC-E type (raw)", group: "adv" },
+    { key: "tnc", off: 39, kind: "nib", label: "TNC type (raw)", group: "adv" },
+    { key: "digi_ch", off: 40, kind: "nib", label: "Digi channel (raw)", group: "adv" },
+    { key: "digi_route", off: 41, kind: "nib", label: "Digi routing (raw)", group: "adv" },
+    { key: "digi_wait", off: 42, kind: "nib", max: 9, label: "Digi TX wait (0-9 s)", group: "adv" },
+  ];
+  function aprsDecodeText(b, off, len) { let s = ""; for (const x of b.subarray(off, off + len)) { if (x === 0 || x === 0xFF) break; s += x >= 32 && x < 127 ? String.fromCharCode(x) : "?"; } return s; }
+  function parseAprs(block) {
+    if (block.length !== 128) throw new Error("APRS block must be 128 bytes");
+    const v = {};
+    for (const f of APRS_FIELDS) {
+      const b = block[f.off];
+      if (f.kind === "nib") v[f.key] = b === 0xFF ? null : b & (f.mask || 0x0F);
+      else if (f.kind === "byte") v[f.key] = b === 0xFF ? null : (b & (f.mask || 0xFF));
+      else if (f.kind === "hemi") v[f.key] = b === 0xFF ? null : String.fromCharCode(b);
+      else if (f.kind === "i16") { const lo = block[f.off], hi = block[f.off + 1]; v[f.key] = (lo === 0xFF && hi === 0xFF) ? null : ((hi << 8 | lo) << 16 >> 16); }
+      else v[f.key] = aprsDecodeText(block, f.off, f.len);
+    }
+    return v;
+  }
+  function validateAprs(f, val) {
+    if (val === null || val === "") return;
+    if (f.kind === "ascii") { if (!/^[A-Z0-9]{0,6}$/.test(val)) throw new Error(`${f.label}: letters/digits only, max 6`); }
+    else if (f.kind === "text") { if (val.length > f.len || /[^\x20-\x7E]/.test(val)) throw new Error(`${f.label}: max ${f.len} plain characters`); }
+    else if (f.kind === "hemi") { if (!f.chars.includes(val)) throw new Error(`${f.label}: ${f.chars.join("/")}`); }
+    else if (f.kind === "i16") { if (!Number.isInteger(val) || val < -10000 || val > 10000) throw new Error(`${f.label}: -10000..10000`); }
+    else {
+      const max = f.opts ? f.opts.length - 1 : (f.max ?? (f.kind === "nib" ? (f.mask || 0x0F) : 255));
+      if (!Number.isInteger(val) || val < 0 || val > max) throw new Error(`${f.label}: 0..${max}`);
+    }
+  }
+  // Apply only edited fields; every other byte stays as read.
+  function encodeAprs(block, edits) {
+    const out = new Uint8Array(block), cur = parseAprs(block), changed = [];
+    for (const f of APRS_FIELDS) {
+      if (!(f.key in edits)) continue;
+      let val = edits[f.key];
+      if (f.kind === "ascii") val = String(val || "").toUpperCase().trim();
+      if (f.kind === "text") val = String(val || "");
+      if (val === cur[f.key] || (val === "" && (cur[f.key] === "" || cur[f.key] === null))) continue;
+      validateAprs(f, val);
+      if (f.kind === "nib" || f.kind === "byte") {
+        const mask = f.mask || (f.kind === "nib" ? 0x0F : 0xFF), old = out[f.off];
+        out[f.off] = ((old === 0xFF ? 0 : old & ~mask) | (val & mask)) & 0xFF;
+      } else if (f.kind === "hemi") out[f.off] = val.charCodeAt(0);
+      else if (f.kind === "i16") { out[f.off] = val & 0xFF; out[f.off + 1] = (val >> 8) & 0xFF; }
+      else {   // keep the padding byte the radio already uses (CPS pads text with 0x00)
+        const used = aprsDecodeText(block, f.off, f.len).length;
+        const pad = (used < f.len && block[f.off + used] === 0x00) ? 0x00 : 0xFF;
+        for (let i = 0; i < f.len; i++) out[f.off + i] = i < val.length ? val.charCodeAt(i) : pad;
+      }
+      changed.push({ key: f.key, label: f.label, from: cur[f.key], to: val });
+    }
+    return { block: out, changed };
+  }
+  function decimalToDMS(dec, isLat) {
+    const hemi = isLat ? (dec < 0 ? "S" : "N") : (dec < 0 ? "W" : "E");
+    let a = Math.abs(dec), d = Math.floor(a), m = Math.floor((a - d) * 60), s = Math.round(((a - d) * 60 - m) * 60);
+    if (s === 60) { s = 0; m++; } if (m === 60) { m = 0; d++; }
+    return { hemi, d, m, s };
+  }
+
+  // --------------------------------------------------------------- CB template
+  const CB40 = [26.965, 26.975, 26.985, 27.005, 27.015, 27.025, 27.035, 27.055, 27.065, 27.075, 27.085, 27.105,
+    27.115, 27.125, 27.135, 27.155, 27.165, 27.175, 27.185, 27.205, 27.215, 27.225, 27.255, 27.235, 27.245,
+    27.265, 27.275, 27.285, 27.295, 27.305, 27.315, 27.325, 27.335, 27.345, 27.355, 27.365, 27.375, 27.385, 27.395, 27.405];
+  function cbRows(mode = "NFM", power = "High") {
+    return CB40.map((f, i) => ({ Name: `CB ${String(i + 1).padStart(2, "0")}`, Frequency: f.toFixed(6), Duplex: "", Offset: "0", Tone: "", Mode: mode, Power: power, Comment: `CB channel ${i + 1}` }));
+  }
+
   // --------------------------------------------------------------- transport
   /* link: { write(Uint8Array) -> Promise, onData = fn(Uint8Array) set by us,
              reconnect() -> Promise (optional) } */
@@ -211,7 +322,7 @@
       if (this.waiter) this.waiter();
     }
     clear() { this.buf.length = 0; }
-    async _w(bytes) { this.txCount += bytes.length; await this.link.write(bytes); }
+    async _w(bytes, o) { this.txCount += bytes.length; await this.link.write(bytes, o); }
     async _r(n, timeoutMs = 3000) {
       const t0 = Date.now();
       while (this.buf.length < n) {
@@ -267,14 +378,14 @@
       this.key = XOR_KEYS[frame[4 + idx]];
       return this.model;
     }
-    async read(addr, len, onBlock) {
+    async read(addr, len, onBlock, cmd = 0x52) {
       const out = new Uint8Array(len);
       for (let a = addr; a < addr + len; a += BLOCK) {
         let ok = false, lastErr;
         for (let t = 0; t < 3 && !ok; t++) {
           try {
             if (t) { await sleep(500); this.clear(); }          // drain any partial reply, then resend
-            await this._w(new Uint8Array([0x52, a >> 8, a & 0xFF, BLOCK]));
+            await this._w(new Uint8Array([cmd, a >> 8, a & 0xFF, BLOCK]));
             const blk = await this._r(4 + BLOCK, 4000);
             if (blk[1] !== (a >> 8) || blk[2] !== (a & 0xFF)) throw new Error(`reply header ${toHex(blk.subarray(0, 4))} does not match address 0x${a.toString(16)}`);
             out.set(this._xor(blk.subarray(4)), a - addr); ok = true;
@@ -285,19 +396,21 @@
       }
       return out;
     }
-    async writeBlock(a, data) {
+    async writeBlock(a, data, cmd = 0x57) {
       if (data.length !== BLOCK) throw new Error("block size");
+      const aprs = cmd === APRS_WRITE;
       const frame = new Uint8Array(4 + BLOCK);
-      frame.set([0x57, a >> 8, a & 0xFF, BLOCK]); frame.set(this._xor(data), 4);
+      frame.set([cmd, a >> 8, a & 0xFF, BLOCK]); frame.set(this._xor(data), 4);
       this.clear();
-      await this._w(frame);
+      await this._w(frame, { withResponse: aprs });       // APRS commit frame is sent gently
       // radio answers a single 0x06; tolerate an echoed header byte or two before it
-      const got = [...(await this._r(1, a >= 0x8000 ? 10000 : 8000))];
+      const got = [...(await this._r(1, aprs ? 30000 : a >= 0x8000 ? 10000 : 8000))];
       for (let i = 0; i < 4 && !got.includes(ACK); i++) {
         try { got.push(...(await this._r(1, 600))); } catch (e) { break; }
       }
       if (!got.includes(ACK)) throw new Error(`no ACK for block 0x${a.toString(16)} (got ${toHex(got)})`);
       if (a >= 0x8000) await sleep(50);
+      if (aprs) await sleep(600);                          // let the flash commit settle before END
     }
     async end() { try { await this._w(new Uint8Array([0x45])); } catch (e) { /* link may drop */ } this.key = null; }
   }
@@ -334,6 +447,14 @@
       return bad;
     });
   }
+  // APRS: one 128-byte block. The radio commits it on ACK and may then drop the
+  // BLE link; the session END is best-effort and verification reconnects.
+  async function readAprs(link, opts) {
+    return session(link, opts, async t => t.read(APRS_ADDR, BLOCK, null, APRS_READ));
+  }
+  async function writeAprs(link, opts, block) {
+    return session(link, opts, async t => t.writeBlock(APRS_ADDR, block, APRS_WRITE));
+  }
   function backupJSON(image) {   // compatible with bj9000_upload.py backups
     const ts = new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15);
     return { name: `bj9000_backup_${ts}.json`, text: JSON.stringify({ tool: `bj9000_web ${VERSION}`, model: image.model, saved: ts, segments: { "0000": toHex(image.ch), "C000": toHex(image.zn) } }) };
@@ -349,12 +470,13 @@
   // ------------------------------------------------------- Web Bluetooth link
   // Split every frame into <=20-byte GATT writes (radio pins ATT MTU at 23).
   function chunkedWriter(sendChunk) {
-    return async (bytes) => {
-      for (let i = 0; i < bytes.length; i += BLE.CHUNK) await sendChunk(bytes.slice(i, i + BLE.CHUNK));
+    return async (bytes, o) => {
+      for (let i = 0; i < bytes.length; i += BLE.CHUNK) await sendChunk(bytes.slice(i, i + BLE.CHUNK), o || {});
     };
   }
   function webBluetoothLink(log) {
     const link = { device: null, ffe1: null, ff31: null, noRsp: true, onData: null };
+    function onNotify(ev) { const v = ev.target.value; if (link.onData) link.onData(new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength))); }
     async function setup() {
       const server = await link.device.gatt.connect();
       const services = await server.getPrimaryServices();
@@ -367,9 +489,9 @@
       }
       if (!link.ffe1) throw new Error("radio's ffe1 data characteristic not found - is this the radio? (Services: " + services.map(s => s.uuid.slice(4, 8)).join(",") + ")");
       link.noRsp = !!link.ffe1.properties.writeWithoutResponse;
-      link.ffe1.addEventListener("characteristicvaluechanged", ev => {
-        const v = ev.target.value; if (link.onData) link.onData(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
-      });
+      // one listener per characteristic object, even across reconnects (else bytes arrive twice)
+      link.ffe1.removeEventListener("characteristicvaluechanged", onNotify);
+      link.ffe1.addEventListener("characteristicvaluechanged", onNotify);
       await link.ffe1.startNotifications();
       if (link.ff31) { await link.ff31.writeValueWithResponse(BLE.UNLOCK); await sleep(400); }
       else log("Warning: ff31 unlock characteristic not found; handshake may fail.");
@@ -387,14 +509,14 @@
     link.ensure = async () => {
       if (!link.device) throw new Error("not connected - tap Connect first");
       if (link.device.gatt.connected && link.ffe1) return;
-      for (let i = 1; i <= 8; i++) {
-        try { await setup(); return; } catch (e) { log(`reconnect ${i}/8: ${e.message}`); await sleep(2000); }
+      for (let i = 1; i <= 12; i++) {
+        try { await setup(); return; } catch (e) { log(`reconnect ${i}/12: ${e.message}`); await sleep(2000); }
       }
       throw new Error("could not reconnect to the radio");
     };
-    link.write = chunkedWriter(async (part) => {
+    link.write = chunkedWriter(async (part, o) => {
       if (!link.device || !link.device.gatt.connected) throw new Error("Bluetooth link is down");
-      if (link.noRsp) await link.ffe1.writeValueWithoutResponse(part);
+      if (link.noRsp && !o.withResponse) await link.ffe1.writeValueWithoutResponse(part);
       else await link.ffe1.writeValueWithResponse(part);
     });
     link.disconnect = () => { try { link.device && link.device.gatt.disconnect(); } catch (e) { } };
@@ -406,6 +528,7 @@
     hex, toHex, eq, encFreq, decFreq, encCtcss, encDcs, buildRecord, describe, parseCSV, zoneFromFilename, zoneNames,
     buildTarget, planWrites, changedBlocks, Transport, readImage, writeBlocks, verifyBlocks, backupJSON, parseBackup,
     webBluetoothLink, chunkedWriter, sleep,
+    APRS_FIELDS, BEACON_TIMES, parseAprs, encodeAprs, validateAprs, decimalToDMS, readAprs, writeAprs, CB40, cbRows,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BJ = api;
 })(typeof window !== "undefined" ? window : globalThis);
