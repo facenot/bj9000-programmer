@@ -1,5 +1,7 @@
 # BJ-9000 / RT-950 Pro Bluetooth Programmer (web app) v1.2.0
 
+**Open the app:** https://facenot.github.io/bj9000-programmer/ (no install, nothing to sign up for)
+
 `index.html` is the whole app. It programs a **Bajeton BJ-9000** or **Radtel RT-950 Pro** over Bluetooth LE from a phone
 browser. The two are the same hardware with the same programming protocol, so pick yours at the top of the page.
 That choice only changes the names the app shows and expects.
@@ -26,6 +28,10 @@ Web Bluetooth only runs on an **https://** address, e.g. this repo's GitHub Page
    **Undo last write** restores the exact pre-write state.
 
 ### Zone CSV format
+
+**Starter file:** [`examples/Zone01_HAM_SIMPLEX.csv`](examples/Zone01_HAM_SIMPLEX.csv) has national calling channels,
+APRS, a repeater example, NOAA and an airband example. Edit it (CHIRP or any spreadsheet), keep the `ZoneNN_NAME.csv`
+naming, and load it. Files exported from CHIRP for other radios work if you rename them this way.
 
 CHIRP CSV columns (`Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,...`).
 The file name sets the zone: `Zone03_LOCAL.csv` = zone 3, named "LOCAL" (max 12 chars).
@@ -76,5 +82,9 @@ A callsign requires an amateur radio licence.
 
 Protocol, BLE details (ffe1 data/notify, ff31 unlock, 20-byte writes), and channel/APRS memory maps come from the
 MIT-licensed RT-950 Pro work of Nathan G. Barguss (2E0NBS), PE1HVH and nivingoonesekera.
-See `THIRD_PARTY_LICENSE_rt950pro_driver.txt`. This is an independent implementation, tested against simulated radios.
-Keep your backups. Use at your own risk.
+See `THIRD_PARTY_LICENSE_rt950pro_driver.txt`. This is an independent implementation (MIT, see `LICENSE`).
+Channel/zone writing has been used on a real BJ-9000; APRS writing is tested against a simulated radio only.
+Keep your backups. Use at your own risk. You are responsible for transmitting only where you are licensed
+(amateur, GMRS, etc.). Set channels you may not transmit on to `Duplex` = `off`.
+
+Bug reports and radio-variant reports (model string, firmware version) are welcome in Issues.

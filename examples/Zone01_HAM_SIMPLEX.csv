@@ -1,0 +1,8 @@
+Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE
+1,2M CALL,146.520000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,High,2 m national FM simplex calling,,,,
+2,2M SMPLX,146.550000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,High,2 m simplex,,,,
+3,APRS,144.390000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,S,High,US APRS,,,,
+5,70CM CALL,446.000000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,High,70 cm national FM simplex calling,,,,
+6,RPT EXAMPL,146.940000,-,0.600000,Tone,100.0,100.0,023,NN,023,Tone->Tone,FM,5.00,,High,Example repeater: replace with your local one (output freq + offset + tone),,,,
+7,NOAA WX1,162.550000,off,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,High,NOAA weather - receive only (Duplex off),,,,
+8,AIR EXMPL,121.500000,off,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,AM,25.00,,High,Airband example: AM receive only,,,,
